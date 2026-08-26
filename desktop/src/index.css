@@ -1,0 +1,82 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans:
+    "Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, "Inter", sans-serif;
+
+  --color-bg: #0b0b0e;
+  --color-surface-1: #131317;
+  --color-surface-2: #1a1a20;
+  --color-surface-3: #212129;
+  --color-border: #2a2a33;
+  --color-border-strong: #383842;
+
+  --color-text: #edeef2;
+  --color-text-muted: #9797a3;
+  --color-text-faint: #64646f;
+
+  --color-accent: #6366f1;
+  --color-accent-hover: #7375f3;
+  --color-accent-soft: #6366f11a;
+
+  --color-success: #34d399;
+  --color-warning: #f2b93d;
+  --color-danger: #f0575d;
+  --color-danger-soft: #f0575d1a;
+  --color-record: #ef4444;
+}
+
+html,
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  height: 100%;
+  overflow: hidden;
+  user-select: none;
+}
+
+#root {
+  height: 100vh;
+  width: 100vw;
+}
+
+input,
+textarea,
+select {
+  user-select: text;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-strong) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong);
+  border-radius: 4px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.animate-record-pulse {
+  animation: pulse-dot 1.6s ease-in-out infinite;
+}

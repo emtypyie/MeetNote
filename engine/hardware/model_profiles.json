@@ -1,0 +1,39 @@
+{
+  "description": "Rules used to pick a faster-whisper model/compute configuration from detected hardware. Evaluated top-to-bottom per list; first matching rule wins. Tune these numbers after benchmarking on target hardware rather than trusting them as final.",
+  "gpu_rules": [
+    {
+      "label": "High-end NVIDIA GPU",
+      "min_vram_mb": 6000,
+      "model": "medium",
+      "compute_type": "float16"
+    },
+    {
+      "label": "Mid-range NVIDIA GPU",
+      "min_vram_mb": 3500,
+      "model": "small",
+      "compute_type": "float16"
+    },
+    {
+      "label": "Entry-level NVIDIA GPU",
+      "min_vram_mb": 0,
+      "model": "base",
+      "compute_type": "float16"
+    }
+  ],
+  "cpu_rules": [
+    {
+      "label": "Capable CPU-only system",
+      "min_ram_gb": 8,
+      "min_cpu_cores": 4,
+      "model": "small",
+      "compute_type": "int8"
+    },
+    {
+      "label": "Modest CPU-only system",
+      "min_ram_gb": 0,
+      "min_cpu_cores": 0,
+      "model": "base",
+      "compute_type": "int8"
+    }
+  ]
+}

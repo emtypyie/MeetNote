@@ -1,0 +1,22 @@
+faster-whisper==1.1.0
+ctranslate2==4.5.0
+# GPU inference support (Windows especially): ctranslate2 needs cuBLAS/cuDNN
+# at runtime and Windows won't discover them on PATH automatically — see
+# engine/cuda_env.py. Harmless to install even on a CPU-only machine.
+nvidia-cudnn-cu12==9.*
+nvidia-cublas-cu12
+soundcard==0.4.3
+numpy<2
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+websockets==14.1
+python-docx==1.1.2
+pydantic==2.10.4
+python-dotenv==1.0.1
+groq==0.15.0
+google-generativeai==0.8.3
+psutil==6.1.1
+pynvml==12.0.0
+httpx==0.28.1
+pytest==8.3.4
+pytest-asyncio==0.25.0

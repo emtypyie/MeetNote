@@ -1,0 +1,15 @@
+{
+  "id": "standard",
+  "name": "Standard Meeting Notes",
+  "sections": [
+    "Meeting Title",
+    "Date",
+    "Attendees",
+    "Agenda",
+    "Discussion",
+    "Decisions",
+    "Action Items",
+    "Deadlines",
+    "Next Steps"
+  ]
+}

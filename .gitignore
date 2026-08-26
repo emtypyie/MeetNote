@@ -1,0 +1,50 @@
+# Secrets — never commit. The engine loads engine/.env; a root .env is
+# ignored defensively too in case one is ever placed there.
+.env
+engine/.env
+
+# Python environments — engine/requirements.txt is the reproducible source
+# of truth, not any of these directories.
+.venv/
+venv/
+env/
+engine/.venv/
+engine/venv/
+
+# Python caches
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node / Vite (desktop/)
+node_modules/
+desktop/node_modules/
+desktop/dist/
+dist/
+.vite/
+coverage/
+*.tsbuildinfo
+
+# Rust / Tauri build output — always rebuilt via `npm run tauri build`
+# (or `dev`), never hand-crafted; see docs/ARCHITECTURE.md's note on why a
+# bare `cargo build` artifact must never be relied on as "the app".
+desktop/src-tauri/target/
+
+# Runtime logs — the logs/ directory itself is tracked (see logs/.gitkeep)
+# so a fresh clone has it ready; the log files it fills up at runtime are not.
+logs/*.log
+engine/logs/
+
+# Meeting data — private user content (transcripts, notes), not source. The
+# engine's default storage root is the user's home directory
+# (~/MeetNote/meetings), outside this repo entirely; this entry only guards
+# against someone pointing "Transcript storage location" at the project dir.
+/meetings/
+
+# OS
+.DS_Store
+Thumbs.db
