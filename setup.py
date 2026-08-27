@@ -12,6 +12,7 @@ Usage:
 """
 
 import argparse
+import getpass
 import platform
 import subprocess
 import sys
@@ -64,6 +65,96 @@ def run_pip_install(req_file: Path) -> None:
     except subprocess.CalledProcessError:
         print(f"\n[Error] Failed to install {req_file.name}")
         sys.exit(1)
+
+
+def configure_ai_providers() -> None:
+    env_file = ENGINE_DIR / ".env"
+    
+    # Parse existing values
+    existing_lines = []
+    groq_key = ""
+    gemini_key = ""
+    
+    if env_file.exists():
+        existing_lines = env_file.read_text(encoding="utf-8").splitlines()
+        for line in existing_lines:
+            line_stripped = line.strip()
+            if line_stripped.startswith("GROQ_API_KEY="):
+                groq_key = line_stripped.split("=", 1)[1].strip(" '\"")
+            elif line_stripped.startswith("GEMINI_API_KEY="):
+                gemini_key = line_stripped.split("=", 1)[1].strip(" '\"")
+
+    print("\n--- MeetNote AI Provider Setup ---")
+    print("You can configure either Groq or Gemini.")
+    print("If both are configured, Gemini is used first and Groq is used as fallback.\n")
+    
+    new_groq = groq_key
+    if groq_key:
+        print("Groq API key already configured")
+    else:
+        new_groq = getpass.getpass("Groq API key [optional]: ").strip()
+        
+    new_gemini = gemini_key
+    if gemini_key:
+        print("Gemini API key already configured")
+    else:
+        new_gemini = getpass.getpass("Gemini API key [optional]: ").strip()
+
+    # Update or append keys
+    groq_updated = False
+    gemini_updated = False
+    
+    new_lines = []
+    for line in existing_lines:
+        line_stripped = line.strip()
+        if line_stripped.startswith("GROQ_API_KEY="):
+            new_lines.append(f"GROQ_API_KEY={new_groq}")
+            groq_updated = True
+        elif line_stripped.startswith("GEMINI_API_KEY="):
+            new_lines.append(f"GEMINI_API_KEY={new_gemini}")
+            gemini_updated = True
+        else:
+            new_lines.append(line)
+            
+    if not groq_updated:
+        new_lines.append(f"GROQ_API_KEY={new_groq}")
+    if not gemini_updated:
+        new_lines.append(f"GEMINI_API_KEY={new_gemini}")
+        
+    try:
+        env_file.parent.mkdir(parents=True, exist_ok=True)
+        env_file.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+        
+        if not IS_WINDOWS:
+            env_file.chmod(0o600)
+    except Exception as e:
+        print(f"\n[Error] Could not save API configuration to {env_file}.")
+        print("Your existing configuration was not intentionally overwritten.")
+        return
+
+    print("\nConfiguration Summary")
+    print("====================")
+    
+    is_groq_configured = bool(new_groq)
+    is_gemini_configured = bool(new_gemini)
+    
+    print(f"Groq:\n{'Configured' if is_groq_configured else 'Not configured'}\n")
+    print(f"Gemini:\n{'Configured' if is_gemini_configured else 'Not configured'}\n")
+    
+    print("AI routing:")
+    if is_gemini_configured and is_groq_configured:
+        print("Gemini -> Groq fallback")
+    elif is_gemini_configured:
+        print("Gemini")
+    elif is_groq_configured:
+        print("Groq")
+    else:
+        print("Unavailable")
+        print("\nNo AI provider key was configured.")
+        print("MeetNote can still record and transcribe meetings locally.")
+        print("AI note generation is currently unavailable.")
+        print("\nTo enable AI notes later, add either a Groq or Gemini API key to:")
+        print(str(env_file.resolve()))
 
 
 def main():
@@ -133,6 +224,8 @@ def main():
             print(f"\n[Error] Failed to install desktop dependencies. Please run 'npm install' in {DESKTOP_DIR.name}/ manually.")
     else:
         print(f"Skipped: {DESKTOP_DIR.name}/package.json not found.")
+
+    configure_ai_providers()
 
     print("\n--- Setup Complete ---")
     print("Environment successfully provisioned.")
