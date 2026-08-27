@@ -104,10 +104,19 @@ def _section(title: str) -> None:
     print(_DIVIDER)
 
 
-def _ok(msg: str)   -> str: return _C.GREEN  + _C.BOLD + "[OK]   " + _C.RESET + msg
-def _warn(msg: str) -> str: return _C.YELLOW + _C.BOLD + "[!]    " + _C.RESET + msg
-def _err(msg: str)  -> str: return _C.RED    + _C.BOLD + "[ERROR]" + _C.RESET + " " + msg
-def _skip(msg: str) -> str: return _C.GRAY   +           "[--]   " + _C.RESET + msg
+def _tag_ok()   -> str: return _C.GREEN  + _C.BOLD + "[OK]" + _C.RESET
+def _tag_warn() -> str: return _C.YELLOW + _C.BOLD + "[WAIT]" + _C.RESET
+def _tag_err()  -> str: return _C.RED    + _C.BOLD + "[ERROR]" + _C.RESET
+def _tag_skip() -> str: return _C.GRAY   +           "[--]" + _C.RESET
+def _tag_info() -> str: return _C.CYAN   + _C.BOLD + "[INFO]" + _C.RESET
+
+def _kv(key: str, value: str, indent: int = 2) -> None:
+    print(f"{' ' * indent}{key:<24} {value}")
+
+def _ok(msg: str)   -> str: return _tag_ok() + "   " + msg
+def _warn(msg: str) -> str: return _tag_warn() + " " + msg
+def _err(msg: str)  -> str: return _tag_err() + " " + msg
+def _skip(msg: str) -> str: return _tag_skip() + "   " + msg
 def _info(msg: str) -> str: return _C.GRAY   + msg + _C.RESET
 
 # ---------------------------------------------------------------------------
@@ -161,22 +170,22 @@ LIFECYCLE_POLL_INTERVAL_SECONDS = 1.0
 logger = logging.getLogger("meetnote.launcher")
 
 
-def setup_logging() -> None:
+def setup_logging(verbose: bool = False) -> None:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     formatter = logging.Formatter(
         fmt="%(asctime)s %(levelname)-8s %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
     )
     file_handler = logging.FileHandler(LOG_DIR / "launcher.log", encoding="utf-8")
     file_handler.setFormatter(formatter)
-    # Console handler: plain text (no ANSI) so log records are readable
-    # in pipes/files without escape codes mixed in.
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setFormatter(logging.Formatter(
-        _C.GRAY + "  [log] " + _C.RESET + "%(message)s"
-    ))
     logger.setLevel(logging.INFO)
     logger.addHandler(file_handler)
-    logger.addHandler(console_handler)
+    
+    if verbose:
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setFormatter(logging.Formatter(
+            _C.GRAY + "  [log] " + _C.RESET + "%(message)s"
+        ))
+        logger.addHandler(console_handler)
 
 
 # ---------------------------------------------------------------------------
@@ -304,19 +313,20 @@ def validate_environment(require_desktop: bool = True) -> ValidationReport:
 def print_validation_failure(report: ValidationReport) -> None:
     print()
     print(_BORDER)
-    print(_C.RED + _C.BOLD + "  MEETNOTE CANNOT START".center(_W) + _C.RESET)
+    print(_C.RED + _C.BOLD + "MEETNOTE ERROR".center(_W) + _C.RESET)
     print(_BORDER)
-    _section("  MISSING REQUIREMENTS")
+    print()
+    print("  " + _err("Missing Requirements"))
     print()
     for name, chk_ok, detail in report.checks:
         if not chk_ok:
-            print("  " + _err(name))
+            _kv(name, _tag_err(), indent=4)
             if detail:
-                print("  " + _C.GRAY + f"  {detail}" + _C.RESET)
+                print("      " + _C.GRAY + detail + _C.RESET)
     print()
     print(_DIVIDER)
     print("  Run the setup script to install dependencies:")
-    print("  " + _C.GREEN + "  python setup.py" + _C.RESET)
+    print("    " + _C.GREEN + "python setup.py" + _C.RESET)
     print(_DIVIDER)
     print()
 
@@ -398,21 +408,29 @@ class EngineManager:
         return self.process.poll() if self.process else None
 
     def wait_until_ready(self, timeout: float = READY_TIMEOUT_SECONDS) -> bool:
+        import sys
         deadline = time.monotonic() + timeout
         logger.info("Waiting for engine health endpoint (%s)...", ENGINE_HEALTH_URL)
         while time.monotonic() < deadline:
             if not self.is_alive():
+                sys.stdout.write(f"\r  {'Health endpoint':<24} {_tag_err()} Failed      \n")
                 logger.error("Engine process exited before becoming ready (exit code %s)", self.exit_code())
                 self.state = EngineState.FAILED
                 return False
+            
+            sys.stdout.write(f"\r  {'Health endpoint':<24} {_tag_warn()} Starting... ")
+            sys.stdout.flush()
+            
             health = _try_fetch_health()
             if health is not None:
+                sys.stdout.write(f"\r  {'Health endpoint':<24} {_tag_ok()}   Ready       \n")
                 self.state = EngineState.READY
                 logger.info("Engine health endpoint is up.")
                 self._log_hardware_summary(health)
                 self._wait_briefly_for_whisper()
                 return True
             time.sleep(READY_POLL_INTERVAL_SECONDS)
+        sys.stdout.write(f"\r  {'Health endpoint':<24} {_tag_err()} Timeout     \n")
         logger.error("Timed out after %.0fs waiting for engine to become ready", timeout)
         self.state = EngineState.FAILED
         return False
@@ -430,17 +448,22 @@ class EngineManager:
         )
 
     def _wait_briefly_for_whisper(self) -> None:
+        import sys
         """Best-effort only: log when Whisper finishes loading if it happens
         quickly. Never blocks desktop startup on this — a slow CPU load is
         not a failure (see module docstring / product spec section 9)."""
         deadline = time.monotonic() + WHISPER_GRACE_WINDOW_SECONDS
         while time.monotonic() < deadline:
+            sys.stdout.write(f"\r  {'Whisper':<24} {_tag_warn()} Loading...  ")
+            sys.stdout.flush()
             health = _try_fetch_health()
             if health is None:
+                sys.stdout.write(f"\r  {'Whisper':<24} {_tag_err()} Unreachable \n")
                 return
             whisper = health.get("whisper") or {}
             if whisper.get("loaded"):
                 status = whisper.get("status") or {}
+                sys.stdout.write(f"\r  {'Whisper':<24} {_tag_ok()}   Ready       \n")
                 logger.info(
                     "Whisper ready (device=%s, model=%s, compute=%s)",
                     status.get("device"),
@@ -449,11 +472,13 @@ class EngineManager:
                 )
                 return
             if whisper.get("error"):
+                sys.stdout.write(f"\r  {'Whisper':<24} {_tag_err()} Failed      \n")
                 self.state = EngineState.DEGRADED
                 logger.warning("Whisper failed to load on GPU or CPU: %s", whisper["error"])
                 logger.warning("Engine is DEGRADED: transcription unavailable, other features still work.")
                 return
             time.sleep(1.0)
+        sys.stdout.write(f"\r  {'Whisper':<24} {_tag_warn()} Still loading\n")
         logger.info("Whisper is still loading in the background; continuing without waiting further.")
 
     def stop(self, reason: str = "launcher requested shutdown") -> None:
@@ -634,23 +659,23 @@ def _status_word(configured: bool, status: str) -> str:
 
 
 def run_diagnostics() -> int:
-    _banner("  MEETNOTE DIAGNOSTICS  ")
+    _banner("MEETNOTE DIAGNOSTICS")
 
-    _section("  SYSTEM")
+    _section("SYSTEM")
     print()
-    print(f"  OS      {_C.CYAN}{platform.system()} {platform.release()}{_C.RESET}")
-    print(f"  Python  {_C.CYAN}{platform.python_version()}{_C.RESET}")
-    print(f"  Root    {_C.GRAY}{PROJECT_ROOT}{_C.RESET}")
+    _kv("OS", f"{_C.CYAN}{platform.system()} {platform.release()}{_C.RESET}")
+    _kv("Python", f"{_C.CYAN}{platform.python_version()}{_C.RESET}")
+    _kv("Root", f"{_C.GRAY}{PROJECT_ROOT}{_C.RESET}")
 
     report = validate_environment(require_desktop=False)
 
-    _section("  ENVIRONMENT CHECKS")
+    _section("ENVIRONMENT CHECKS")
     print()
-    e_ok  = _C.GREEN + "[OK]" + _C.RESET
-    e_bad = _C.RED   + "[!!]" + _C.RESET
-    print(f"  {e_ok if ENGINE_MAIN.exists() else e_bad}  Engine main.py")
-    print(f"  {e_ok if (DESKTOP_DIR / 'package.json').exists() else e_bad}  Desktop package.json")
-    print(f"  {e_ok if ENV_FILE.exists() else _C.YELLOW + '[--]' + _C.RESET}  engine/.env")
+    e_ok  = _tag_ok()
+    e_bad = _tag_err()
+    _kv("Engine main.py", e_ok if ENGINE_MAIN.exists() else e_bad)
+    _kv("Desktop package.json", e_ok if (DESKTOP_DIR / 'package.json').exists() else e_bad)
+    _kv("engine/.env", e_ok if ENV_FILE.exists() else _tag_skip())
 
     missing = [name for name, chk_ok, _ in report.checks if not chk_ok]
     if missing:
@@ -688,37 +713,52 @@ def run_diagnostics() -> int:
     primary = ai.get("primary") or {}
     fallback = ai.get("fallback") or {}
 
-    _section("  HARDWARE")
+    _section("HARDWARE")
     print()
     if hw.get("os"):
-        print(f"  OS (engine)  {_C.CYAN}{hw['os']}{_C.RESET}")
+        _kv("OS (engine)", f"{_C.CYAN}{hw['os']}{_C.RESET}")
     gpu_name = hw.get("gpu_name")
     if gpu_name:
-        print(f"  GPU          {_C.GREEN}{gpu_name}{_C.RESET}")
+        _kv("GPU", f"{_C.GREEN}{gpu_name}{_C.RESET}")
         if hw.get("cuda_usable"):
-            print(f"  CUDA         {_C.GREEN}Installed and usable{_C.RESET}")
+            _kv("CUDA", f"{_C.GREEN}Installed and usable{_C.RESET}")
         else:
             reason = hw.get("cuda_failure_reason") or "Missing dependencies"
-            print(f"  CUDA         {_C.YELLOW}Unavailable ({reason}){_C.RESET}")
+            _kv("CUDA", f"{_C.YELLOW}Unavailable ({reason}){_C.RESET}")
             print(f"  {_info('Hint: run python setup.py --gpu to install GPU support.')}")
     else:
-        print(f"  GPU          {_C.GRAY}Not detected{_C.RESET}")
+        _kv("GPU", f"{_C.GRAY}Not detected{_C.RESET}")
 
     if whisper.get("loaded"):
-        print(f"  Whisper      {_C.GREEN}Available ({mode.get('device', '?')}, {mode.get('model_size', '?')}){_C.RESET}")
+        _kv("Whisper", f"{_C.GREEN}Available ({mode.get('device', '?')}, {mode.get('model_size', '?')}){_C.RESET}")
     elif whisper.get("loading"):
-        print(f"  Whisper      {_C.YELLOW}Still loading{_C.RESET}")
+        _kv("Whisper", f"{_C.YELLOW}Still loading{_C.RESET}")
     else:
-        print(f"  Whisper      {_C.RED}Unavailable ({whisper.get('error') or 'unknown reason'}){_C.RESET}")
+        _kv("Whisper", f"{_C.RED}Unavailable ({whisper.get('error') or 'unknown reason'}){_C.RESET}")
 
-    _section("  AI PROVIDERS")
+    _section("AI PROVIDERS")
     print()
-    groq_status   = _status_word(primary.get("configured", False),  primary.get("status", "unknown"))
-    gemini_status = _status_word(fallback.get("configured", False), fallback.get("status", "unknown"))
-    g_ok  = _C.GREEN + "[OK]" + _C.RESET
-    g_bad = _C.GRAY  + "[--]" + _C.RESET
-    print(f"  {g_ok if primary.get('configured')  else g_bad}  Groq API    {groq_status}")
-    print(f"  {g_ok if fallback.get('configured') else g_bad}  Gemini API  {gemini_status}")
+    
+    gemini_data = ai.get("gemini") or {}
+    groq_data = ai.get("groq") or {}
+    
+    gemini_status = _status_word(gemini_data.get("configured", False), gemini_data.get("status", "unknown"))
+    groq_status = _status_word(groq_data.get("configured", False), groq_data.get("status", "unknown"))
+    
+    _kv("Gemini API", f"{_tag_ok() if gemini_data.get('configured') else _tag_skip()}   {gemini_status}")
+    _kv("Groq API", f"{_tag_ok() if groq_data.get('configured') else _tag_skip()}   {groq_status}")
+    
+    primary_name = ai.get("primary")
+    fallback_name = ai.get("fallback")
+    
+    if primary_name:
+        route = primary_name.capitalize()
+        if fallback_name:
+            route += f" -> {fallback_name.capitalize()} fallback"
+        _kv("Routing", route)
+    else:
+        _kv("Routing", f"{_C.GRAY}AI unavailable{_C.RESET}")
+        
     print()
 
     engine.stop(reason="diagnostics run finished")
@@ -755,19 +795,26 @@ def main() -> int:
     parser.add_argument(
         "--diagnostics", action="store_true", help="Print environment/health report and exit (no UI)."
     )
+    parser.add_argument(
+        "--verbose", action="store_true", help="Show raw engine logs in the console."
+    )
     args = parser.parse_args()
 
-    setup_logging()
+    setup_logging(verbose=args.verbose)
 
     if args.diagnostics:
         return run_diagnostics()
 
-    _banner("  MEETNOTE  ")
+    print()
+    print(_BORDER)
+    print(_C.CYAN + _C.BOLD + "MEETNOTE".center(_W) + _C.RESET)
+    print(_C.CYAN + "Desktop Meeting Assistant".center(_W) + _C.RESET)
+    print(_BORDER)
 
     logger.info("Detecting system...")
     logger.info("OS: %s %s | Project root: %s", platform.system(), platform.release(), PROJECT_ROOT)
 
-    _section("  ENVIRONMENT CHECK")
+    _section("SYSTEM CHECK")
     print()
     logger.info("Checking environment...")
     try:
@@ -782,8 +829,16 @@ def main() -> int:
         for name, chk_ok, detail in report.checks:
             logger.info("Check: %-40s %-6s %s", name, "OK" if chk_ok else "FAIL", detail)
         return 1
+        
     for name, chk_ok, detail in report.checks:
         logger.info("Check: %-40s %-6s %s", name, "OK" if chk_ok else "FAIL", detail)
+        # Keep names relatively short for presentation
+        disp_name = name.split(' (')[0]
+        _kv(disp_name, _tag_ok())
+        if "root" in disp_name.lower() or "file" in disp_name.lower() or "directory" in disp_name.lower():
+            if detail and str(detail) not in ("all present", "True"):
+                # Indent paths so they don't wrap long lines
+                print("      " + _C.GRAY + str(detail) + _C.RESET)
 
     try:
         desktop_mode = choose_desktop_mode(args, report)
@@ -793,6 +848,7 @@ def main() -> int:
         return 1
 
     logger.info("Desktop launch mode: %s", desktop_mode)
+    print()
 
     engine = EngineManager()
     desktop_process: Optional[subprocess.Popen] = None
@@ -800,9 +856,24 @@ def main() -> int:
     exit_code = 0
 
     def shutdown(reason: str) -> None:
+        _section("SHUTDOWN")
+        print()
         if desktop_process is not None and desktop_process.poll() is None:
             stop_desktop(desktop_process)
-        engine.stop(reason=reason)
+            _kv("Desktop application", _tag_ok() + "   Stopped")
+        else:
+            _kv("Desktop application", _tag_skip() + "   Already stopped")
+            
+        if engine.is_alive():
+            engine.stop(reason=reason)
+            _kv("Engine", _tag_ok() + "   Stopped")
+        else:
+            _kv("Engine", _tag_skip() + "   Already stopped")
+            
+        _kv("Launcher", _tag_ok() + "   Closed")
+        print()
+        print("  MeetNote shut down cleanly.")
+        print()
         logger.info("Launcher shutting down.")
 
     def handle_signal(signum, _frame) -> None:
@@ -814,17 +885,18 @@ def main() -> int:
     if not IS_WINDOWS:
         signal.signal(signal.SIGTERM, handle_signal)
 
-    _section("  STARTING")
-    print()
-
     try:
         while True:
+            _section("ENGINE STARTUP")
+            print()
             logger.info("Starting engine...")
             engine.start()
+            _kv("Engine", f"{_tag_ok()}   Running   {_C.GRAY}PID {engine.process.pid}{_C.RESET}")
+            
             if not engine.wait_until_ready():
                 print()
                 print(_BORDER)
-                print(_C.RED + _C.BOLD + "  MEETNOTE CANNOT START".center(_W) + _C.RESET)
+                print(_C.RED + _C.BOLD + "MEETNOTE ERROR".center(_W) + _C.RESET)
                 print(_BORDER)
                 print()
                 print("  " + _err("Engine did not become ready in time."))
@@ -834,11 +906,42 @@ def main() -> int:
                 return 1
 
             logger.info("Engine ready.")
+            print()
+            
+            # Print Hardware Block
+            health = _try_fetch_health() or {}
+            hw = health.get("hardware") or {}
+            mode = health.get("transcription_mode") or {}
+            print("  Hardware")
+            _kv("  OS", hw.get("os", "?"), indent=4)
+            gpu_name = hw.get("gpu_name")
+            if gpu_name:
+                _kv("  GPU", gpu_name, indent=4)
+                _kv("  CUDA", "Available" if hw.get("cuda_usable") else "Unavailable", indent=4)
+            else:
+                _kv("  GPU", "Not available", indent=4)
+                _kv("  CUDA", "Not available", indent=4)
+                
+            trans_mode = f"{mode.get('device', '?').upper()} / {mode.get('model_size', '?')}"
+            _kv("  Transcription", trans_mode, indent=4)
+            print()
+
+            _section("DESKTOP APPLICATION")
+            print()
+            _kv("Launch mode", desktop_mode.capitalize())
+            
             logger.info("Starting MeetNote desktop application...")
             desktop_process = start_desktop(desktop_mode, report.built_executable)
             logger.info("Desktop process started (pid=%s). MeetNote is ready.", desktop_process.pid)
-            print("  " + _ok("MeetNote is running."))
-            print("  " + _info("Close the desktop window to quit."))
+            _kv("Application", f"{_tag_ok()}   Running   {_C.GRAY}PID {desktop_process.pid}{_C.RESET}")
+            print()
+            print(_BORDER)
+            print(_C.GREEN + _C.BOLD + "MEETNOTE RUNNING".center(_W) + _C.RESET)
+            print(_BORDER)
+            print()
+            print("  MeetNote is ready.")
+            print()
+            print("  Close the desktop window to quit.")
             print()
 
             # Main lifecycle loop: watch both processes concurrently.
@@ -897,11 +1000,13 @@ def main() -> int:
 
     except KeyboardInterrupt:
         logger.info("Interrupted - shutting down.")
-        print()
-        print("  " + _warn("Shutting down..."))
         shutdown("keyboard interrupt")
     except EngineStartError as exc:
         logger.error("%s", exc)
+        print()
+        print(_BORDER)
+        print(_C.RED + _C.BOLD + "MEETNOTE ERROR".center(_W) + _C.RESET)
+        print(_BORDER)
         print()
         print("  " + _err(str(exc)))
         print()
@@ -909,6 +1014,10 @@ def main() -> int:
         shutdown("engine could not be started")
     except Exception:
         logger.exception("Unexpected launcher error")
+        print()
+        print(_BORDER)
+        print(_C.RED + _C.BOLD + "MEETNOTE ERROR".center(_W) + _C.RESET)
+        print(_BORDER)
         print()
         print("  " + _err("Unexpected error. See logs/launcher.log for details."))
         print()
