@@ -271,11 +271,20 @@ class EngineManager:
 
     def start(self) -> None:
         if _port_already_in_use():
-            raise EngineStartError(
-                f"Port {ENGINE_PORT} is already in use by another process - this is either a "
-                "previous MeetNote engine that didn't shut down, or something unrelated using the "
-                "same port. Close it and try again."
+            logger.warning(
+                "Port %s is already in use — attempting to stop the previous engine process.",
+                ENGINE_PORT,
             )
+            _kill_port_holder()
+            # Give the OS a moment to release the socket.
+            time.sleep(1.5)
+            if _port_already_in_use():
+                raise EngineStartError(
+                    f"Port {ENGINE_PORT} is still in use after attempting to stop the previous "
+                    "process. It may be held by an unrelated application. "
+                    "Close whatever is using that port and try again."
+                )
+            logger.info("Port %s is now free — continuing startup.", ENGINE_PORT)
 
         LOG_DIR.mkdir(parents=True, exist_ok=True)
         log_path = LOG_DIR / "engine.log"
@@ -417,6 +426,63 @@ def _port_already_in_use() -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(0.5)
         return s.connect_ex(("127.0.0.1", ENGINE_PORT)) == 0
+
+
+def _kill_port_holder() -> None:
+    """Best-effort: find and kill the process listening on ENGINE_PORT.
+
+    Uses platform-appropriate tools to locate the PID, then sends a
+    forceful termination signal. Errors are logged but never raised —
+    the caller checks the port again after this returns and decides
+    whether to proceed or abort.
+    """
+    pid: Optional[int] = None
+
+    try:
+        if IS_WINDOWS:
+            # netstat -ano output: Proto  Local  Foreign  State  PID
+            out = subprocess.check_output(
+                ["netstat", "-ano"],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            )
+            for line in out.splitlines():
+                parts = line.split()
+                # Match lines like: TCP  127.0.0.1:8765  ...  LISTENING  <pid>
+                if len(parts) >= 5 and f":{ENGINE_PORT}" in parts[1] and parts[3] == "LISTENING":
+                    try:
+                        pid = int(parts[4])
+                    except ValueError:
+                        pass
+                    break
+        else:
+            # lsof is available on macOS and most Linux distros.
+            out = subprocess.check_output(
+                ["lsof", "-t", "-i", f"TCP:{ENGINE_PORT}", "-s", "TCP:LISTEN"],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            )
+            first_line = out.strip().splitlines()[0] if out.strip() else ""
+            pid = int(first_line) if first_line.isdigit() else None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not determine PID for port %s: %s", ENGINE_PORT, exc)
+
+    if pid is None:
+        logger.warning("No PID found for port %s — cannot auto-kill.", ENGINE_PORT)
+        return
+
+    logger.info("Killing process PID %s that is holding port %s.", pid, ENGINE_PORT)
+    try:
+        if IS_WINDOWS:
+            subprocess.call(
+                ["taskkill", "/F", "/PID", str(pid)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        else:
+            os.kill(pid, signal.SIGKILL)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to kill PID %s: %s", pid, exc)
 
 
 def _try_fetch_health() -> Optional[dict]:
@@ -644,61 +710,76 @@ def main() -> int:
         signal.signal(signal.SIGTERM, handle_signal)
 
     try:
-        logger.info("Starting engine...")
-        engine.start()
-        if not engine.wait_until_ready():
-            print(
-                "\nMeetNote cannot start.\n\n"
-                "The engine did not become ready in time. Check logs/engine.log and "
-                "logs/launcher.log for details.\n"
-            )
-            engine.stop(reason="engine failed to become ready")
-            return 1
-
-        logger.info("Engine ready.")
-        logger.info("Starting MeetNote desktop application...")
-        desktop_process = start_desktop(desktop_mode, report.built_executable)
-        logger.info("Desktop process started (pid=%s). MeetNote is ready.", desktop_process.pid)
-
-        # Main lifecycle loop: watch both processes concurrently.
-        restarts_exhausted = False
         while True:
-            time.sleep(LIFECYCLE_POLL_INTERVAL_SECONDS)
-
-            desktop_rc = desktop_process.poll()
-            if desktop_rc is not None:
-                logger.info("Desktop application exited (exit code %s).", desktop_rc)
-                engine.stop(reason="MeetNote desktop application closed")
-                break
-
-            if restarts_exhausted:
-                # Already gave up on restarting; keep the desktop app running
-                # (it shows the engine as unavailable via its own health
-                # checks) without re-logging the same conclusion every second.
-                continue
-
-            if not engine.is_alive():
-                exit_code_seen = engine.exit_code()
-                logger.error(
-                    "Engine exited unexpectedly (exit code %s) while the desktop app is still running.",
-                    exit_code_seen,
+            logger.info("Starting engine...")
+            engine.start()
+            if not engine.wait_until_ready():
+                print(
+                    "\nMeetNote cannot start.\n\n"
+                    "The engine did not become ready in time. Check logs/engine.log and "
+                    "logs/launcher.log for details.\n"
                 )
-                if restart_count >= MAX_ENGINE_RESTARTS:
-                    logger.error(
-                        "MeetNote engine could not be restarted after %d attempts. "
-                        "Your existing local meeting data has been preserved.",
-                        MAX_ENGINE_RESTARTS,
-                    )
-                    restarts_exhausted = True
+                engine.stop(reason="engine failed to become ready")
+                return 1
+
+            logger.info("Engine ready.")
+            logger.info("Starting MeetNote desktop application...")
+            desktop_process = start_desktop(desktop_mode, report.built_executable)
+            logger.info("Desktop process started (pid=%s). MeetNote is ready.", desktop_process.pid)
+
+            # Main lifecycle loop: watch both processes concurrently.
+            restarts_exhausted = False
+            desktop_requested_restart = False
+            while True:
+                time.sleep(LIFECYCLE_POLL_INTERVAL_SECONDS)
+
+                desktop_rc = desktop_process.poll()
+                if desktop_rc is not None:
+                    if desktop_rc == 42:
+                        logger.info("Desktop application requested restart (exit code 42).")
+                        engine.stop(reason="restarting application")
+                        desktop_requested_restart = True
+                        break
+                    else:
+                        logger.info("Desktop application exited (exit code %s).", desktop_rc)
+                        engine.stop(reason="MeetNote desktop application closed")
+                        break
+
+                if restarts_exhausted:
+                    # Already gave up on restarting; keep the desktop app running
+                    # (it shows the engine as unavailable via its own health
+                    # checks) without re-logging the same conclusion every second.
                     continue
-                restart_count += 1
-                logger.warning("Attempting engine restart %d/%d...", restart_count, MAX_ENGINE_RESTARTS)
-                try:
-                    engine.start()
-                    if not engine.wait_until_ready():
-                        logger.error("Engine restart %d failed to become ready.", restart_count)
-                except EngineStartError as exc:
-                    logger.error("Engine restart %d could not even be attempted: %s", restart_count, exc)
+
+                if not engine.is_alive():
+                    exit_code_seen = engine.exit_code()
+                    logger.error(
+                        "Engine exited unexpectedly (exit code %s) while the desktop app is still running.",
+                        exit_code_seen,
+                    )
+                    if restart_count >= MAX_ENGINE_RESTARTS:
+                        logger.error(
+                            "MeetNote engine could not be restarted after %d attempts. "
+                            "Your existing local meeting data has been preserved.",
+                            MAX_ENGINE_RESTARTS,
+                        )
+                        restarts_exhausted = True
+                        continue
+                    restart_count += 1
+                    logger.warning("Attempting engine restart %d/%d...", restart_count, MAX_ENGINE_RESTARTS)
+                    try:
+                        engine.start()
+                        if not engine.wait_until_ready():
+                            logger.error("Engine restart %d failed to become ready.", restart_count)
+                    except EngineStartError as exc:
+                        logger.error("Engine restart %d could not even be attempted: %s", restart_count, exc)
+            
+            if desktop_requested_restart:
+                logger.info("Restarting application...")
+                restart_count = 0
+                continue
+            else:
+                break
 
     except KeyboardInterrupt:
         logger.info("Interrupted - shutting down.")

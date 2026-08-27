@@ -26,6 +26,9 @@ DEFAULT_CONFIG = {
         "output_gain": 1.0,
         "chunk_seconds": 25,
     },
+    "transcription": {
+        "hardware_mode": "automatic",
+    },
     "ai": {
         "primary_provider": "groq",
         "fallback_provider": "gemini",
@@ -58,22 +61,26 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
+def _load_config_unlocked() -> dict:
+    path = config_path()
+    if not path.exists():
+        atomic_write_json(path, DEFAULT_CONFIG)
+        return copy.deepcopy(DEFAULT_CONFIG)
+    try:
+        on_disk = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        on_disk = {}
+    return _deep_merge(DEFAULT_CONFIG, on_disk)
+
+
 def load_config() -> dict:
     with _lock:
-        path = config_path()
-        if not path.exists():
-            atomic_write_json(path, DEFAULT_CONFIG)
-            return copy.deepcopy(DEFAULT_CONFIG)
-        try:
-            on_disk = json.loads(path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            on_disk = {}
-        return _deep_merge(DEFAULT_CONFIG, on_disk)
+        return _load_config_unlocked()
 
 
 def save_config(patch: dict) -> dict:
     with _lock:
-        current = load_config()
+        current = _load_config_unlocked()
         merged = _deep_merge(current, patch)
         atomic_write_json(config_path(), merged)
         return merged

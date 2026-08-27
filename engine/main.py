@@ -97,6 +97,7 @@ class EngineState:
         self.unfinished_on_startup: list[dict] = []
         self.ws_hub = WSHub()
         self.session_lock = threading.Lock()
+        self.active_hardware_preference: str = "automatic"
 
     def broadcast(self, message: dict) -> None:
         self.ws_hub.broadcast(message)
@@ -123,6 +124,9 @@ def _load_whisper_in_background():
         engine_state.whisper_loading = False
 
 
+
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     setup_logging()
@@ -137,15 +141,24 @@ async def lifespan(app: FastAPI):
     db.init_db()
     engine_state.unfinished_on_startup = scan_for_unfinished()
 
-    engine_state.hardware_profile = detect_hardware()
-    engine_state.mode_decision = select_transcription_mode(engine_state.hardware_profile)
+    hardware_mode = engine_state.config.get("transcription", {}).get("hardware_mode", "automatic")
+    engine_state.active_hardware_preference = hardware_mode
+    engine_state.hardware_profile = detect_hardware(skip_cuda_check=(hardware_mode == "cpu"))
+    engine_state.mode_decision = select_transcription_mode(
+        engine_state.hardware_profile, user_preference=hardware_mode
+    )
     logger.info(
         "Hardware: %s | Transcription mode: %s (%s)",
         engine_state.hardware_profile.to_dict(),
         engine_state.mode_decision.to_dict(),
         engine_state.mode_decision.reason,
     )
-    threading.Thread(target=_load_whisper_in_background, daemon=True, name="whisper-load").start()
+
+    if engine_state.mode_decision.device == "error":
+        engine_state.whisper_load_error = engine_state.mode_decision.reason
+        engine_state.whisper_loading = False
+    else:
+        threading.Thread(target=_load_whisper_in_background, daemon=True, name="whisper-load").start()
 
     ai_cfg = engine_state.config["ai"]
     engine_state.ai_router = AIRouter(
@@ -229,6 +242,9 @@ def health():
     storage_ok = _storage_health()
     router_status = engine_state.ai_router.status() if engine_state.ai_router else None
 
+    current_hardware_mode = engine_state.config.get("transcription", {}).get("hardware_mode", "automatic")
+    restart_required = current_hardware_mode != engine_state.active_hardware_preference
+
     return {
         "os": os_display_name(),
         "hardware": engine_state.hardware_profile.to_dict() if engine_state.hardware_profile else None,
@@ -238,6 +254,9 @@ def health():
             "loaded": bool(engine_state.transcriber and engine_state.transcriber.is_loaded),
             "error": engine_state.whisper_load_error,
             "status": engine_state.transcriber.status() if engine_state.transcriber else None,
+            "restart_required": restart_required,
+            "saved_hardware_preference": current_hardware_mode,
+            "active_hardware_preference": engine_state.active_hardware_preference,
         },
         "audio_devices": device_probe.to_dict(),
         "storage": storage_ok,
@@ -274,9 +293,14 @@ def get_config():
 
 @app.post("/config")
 def patch_config(patch: dict):
+    if "transcription" in patch and "hardware_mode" in patch["transcription"]:
+        if engine_state.active_session is not None:
+            raise HTTPException(409, "Cannot change transcription hardware while a meeting is in progress")
+
     engine_state.config = save_config(patch)
     if "storage_root" in patch and patch["storage_root"]:
         set_storage_root(Path(patch["storage_root"]))
+    
     return engine_state.config
 
 
@@ -355,9 +379,19 @@ def export_meeting(meeting_id: str, fmt: str):
     if not path.exists():
         if store.metadata.get("notes_status") != "completed":
             raise HTTPException(409, "Notes have not been generated for this meeting yet")
-        # Notes text exists in notes.md typically; regenerate the requested
-        # format from it defensively if one export file is missing.
-        raise HTTPException(500, f"Expected export file missing: {filename}")
+        
+        notes_md_path = meeting_dir / "notes.md"
+        if not notes_md_path.exists():
+            raise HTTPException(500, f"Expected export file missing: {filename} and notes.md is also missing")
+            
+        notes_markdown = notes_md_path.read_text(encoding="utf-8")
+        if fmt == "docx":
+            from export.docx import write_docx
+            meeting_date = (store.metadata.get("started_at") or "")[:10]
+            write_docx(meeting_dir, store.metadata.get("title", "Meeting Notes"), meeting_date, notes_markdown)
+        elif fmt == "txt":
+            from export.txt import write_notes_txt
+            write_notes_txt(meeting_dir, notes_markdown)
 
     # The path is returned (not the file's bytes) so the frontend opens it
     # with the native OS file handler via Tauri's opener plugin, rather than
@@ -422,8 +456,14 @@ def start_meeting(body: StartMeetingBody):
     with engine_state.session_lock:
         if engine_state.active_session is not None:
             raise HTTPException(409, "A meeting is already in progress")
+            
+        # Load the model synchronously if it hasn't been loaded yet
+        if engine_state.transcriber is None and engine_state.mode_decision.device != "error":
+            # Avoid UI deadlock indication by ensuring loading is False after
+            _load_whisper_in_background()
+
         if engine_state.transcriber is None or not engine_state.transcriber.is_loaded:
-            detail = engine_state.whisper_load_error or "Whisper model is still loading"
+            detail = engine_state.whisper_load_error or "Whisper model failed to load."
             raise HTTPException(503, detail)
 
         try:
@@ -542,8 +582,13 @@ def resume_after_restart(meeting_id: str):
     with engine_state.session_lock:
         if engine_state.active_session is not None:
             raise HTTPException(409, "A meeting is already in progress")
+            
+        if engine_state.transcriber is None and engine_state.mode_decision.device != "error":
+            _load_whisper_in_background()
+            
         if engine_state.transcriber is None or not engine_state.transcriber.is_loaded:
-            raise HTTPException(503, engine_state.whisper_load_error or "Whisper model is still loading")
+            detail = engine_state.whisper_load_error or "Whisper model failed to load."
+            raise HTTPException(503, detail)
 
         row = db.get_meeting(meeting_id)
         if row is None:

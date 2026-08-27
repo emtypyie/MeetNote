@@ -41,23 +41,33 @@ def _load_profiles() -> dict:
 
 
 def select_transcription_mode(
-    profile: HardwareProfile, profiles: dict | None = None
+    profile: HardwareProfile, user_preference: str = "automatic", profiles: dict | None = None
 ) -> TranscriptionModeDecision:
     profiles = profiles or _load_profiles()
 
-    if profile.cuda_usable:
-        vram = profile.gpu_vram_mb or 0
-        for rule in profiles["gpu_rules"]:
-            if vram >= rule["min_vram_mb"]:
-                return TranscriptionModeDecision(
-                    device="cuda",
-                    model_size=rule["model"],
-                    compute_type=rule["compute_type"],
-                    label=rule["label"],
-                    reason=f"CUDA usable on {profile.gpu_name} ({vram} MB VRAM)",
-                )
+    if user_preference in ("automatic", "gpu"):
+        if profile.cuda_usable:
+            vram = profile.gpu_vram_mb or 0
+            for rule in profiles["gpu_rules"]:
+                if vram >= rule["min_vram_mb"]:
+                    return TranscriptionModeDecision(
+                        device="cuda",
+                        model_size=rule["model"],
+                        compute_type=rule["compute_type"],
+                        label=rule["label"],
+                        reason=f"CUDA usable on {profile.gpu_name} ({vram} MB VRAM)",
+                    )
+        elif user_preference == "gpu":
+            # Explicitly requested GPU, but it's not usable. Don't fall back to CPU silently.
+            return TranscriptionModeDecision(
+                device="error",
+                model_size="",
+                compute_type="",
+                label="GPU unavailable",
+                reason=profile.cuda_failure_reason or "NVIDIA GPU not detected or usable.",
+            )
 
-    # CPU path — either no usable CUDA, or (defensively) no gpu_rule matched.
+    # CPU path — either user requested CPU, no usable CUDA on automatic, or no gpu_rule matched.
     for rule in profiles["cpu_rules"]:
         if (
             profile.ram_total_gb >= rule["min_ram_gb"]

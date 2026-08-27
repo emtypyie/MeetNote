@@ -8,6 +8,19 @@ from pathlib import Path
 from docx import Document
 from docx.shared import Pt
 
+import re
+
+def _add_markdown_runs(paragraph, text: str):
+    parts = re.split(r'(\*\*.*?\*\*|\*.*?\*)', text)
+    for part in parts:
+        if part.startswith('**') and part.endswith('**') and len(part) >= 4:
+            run = paragraph.add_run(part[2:-2])
+            run.bold = True
+        elif part.startswith('*') and part.endswith('*') and len(part) >= 2:
+            run = paragraph.add_run(part[1:-1])
+            run.italic = True
+        elif part:
+            paragraph.add_run(part)
 
 def write_docx(meeting_dir: Path, meeting_title: str, meeting_date: str, notes_markdown: str) -> Path:
     doc = Document()
@@ -24,9 +37,11 @@ def write_docx(meeting_dir: Path, meeting_title: str, meeting_date: str, notes_m
         elif line.startswith("# "):
             doc.add_heading(line[2:].strip(), level=1)
         elif line.startswith("- ") or line.startswith("* "):
-            doc.add_paragraph(line[2:].strip(), style="List Bullet")
+            p = doc.add_paragraph(style="List Bullet")
+            _add_markdown_runs(p, line[2:].strip())
         else:
-            p = doc.add_paragraph(line)
+            p = doc.add_paragraph()
+            _add_markdown_runs(p, line)
             p.paragraph_format.space_after = Pt(6)
 
     path = meeting_dir / "notes.docx"

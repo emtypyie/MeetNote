@@ -120,11 +120,15 @@ def _check_cuda_usable(gpu_present: bool) -> tuple[bool, Optional[str]]:
         return False, f"ctranslate2 could not initialize CUDA: {exc}"
 
 
-def detect_hardware() -> HardwareProfile:
+def detect_hardware(skip_cuda_check: bool = False) -> HardwareProfile:
     os_kind = detect_os()
     vm = psutil.virtual_memory()
     gpu_name, gpu_vram_mb, driver_present, gpu_warnings = _detect_gpu()
-    cuda_usable, cuda_failure_reason = _check_cuda_usable(driver_present)
+    
+    if skip_cuda_check:
+        cuda_usable, cuda_failure_reason = False, "Skipped because CPU-only mode is selected"
+    else:
+        cuda_usable, cuda_failure_reason = _check_cuda_usable(driver_present)
 
     profile = HardwareProfile(
         os_name=os_display_name(),
@@ -141,7 +145,7 @@ def detect_hardware() -> HardwareProfile:
         warnings=gpu_warnings,
     )
 
-    if driver_present and not cuda_usable:
+    if driver_present and not cuda_usable and not skip_cuda_check:
         logger.warning(
             "GPU detected (%s) but CUDA inference is not usable: %s",
             gpu_name,

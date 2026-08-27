@@ -66,3 +66,36 @@ def test_modest_cpu_only_system():
     decision = select_transcription_mode(profile)
     assert decision.device == "cpu"
     assert decision.model_size == "base"
+
+
+def test_explicit_gpu_success():
+    profile = _profile(
+        gpu_name="RTX 4060", gpu_vram_mb=8188, cuda_driver_present=True, cuda_usable=True
+    )
+    decision = select_transcription_mode(profile, user_preference="gpu")
+    assert decision.device == "cuda"
+
+
+def test_explicit_gpu_fails_if_unusable():
+    profile = _profile(
+        gpu_name="RTX 4060",
+        gpu_vram_mb=8188,
+        cuda_driver_present=True,
+        cuda_usable=False,
+        cuda_failure_reason="cuDNN not found",
+    )
+    decision = select_transcription_mode(profile, user_preference="gpu")
+    # Shouldn't fall back to CPU if they explicitly demanded GPU
+    assert decision.device == "error"
+    assert "cuDNN" in decision.reason
+
+
+def test_explicit_cpu_overrides_usable_gpu():
+    profile = _profile(
+        gpu_name="RTX 4090", gpu_vram_mb=24000, cuda_driver_present=True, cuda_usable=True,
+        ram_total_gb=32.0, cpu_logical=16
+    )
+    decision = select_transcription_mode(profile, user_preference="cpu")
+    # Even though GPU is amazing, user said CPU
+    assert decision.device == "cpu"
+    assert decision.model_size == "small"

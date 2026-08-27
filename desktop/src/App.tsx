@@ -34,6 +34,11 @@ function App() {
       const list = await engineClient.listUnfinished().catch(() => []);
       setUnfinished(list);
       setCheckedRecovery(true);
+
+      const config = await engineClient.getConfig().catch(() => null);
+      if (config?.startup_behavior === "show_new_meeting") {
+        navigate({ name: "new-meeting" });
+      }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

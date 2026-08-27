@@ -129,12 +129,61 @@ fn engine_port() -> u16 {
     ENGINE_PORT
 }
 
+#[tauri::command]
+fn restart_app() {
+    std::process::exit(42);
+}
+
+/// Open a plain-text notes file in the platform text editor.
+///
+/// The path is supplied by the frontend after it has been resolved and
+/// verified by the engine (GET /meetings/{id}/export/txt), so it is always
+/// a known MeetNote artifact — not an arbitrary caller-controlled path.
+/// We still validate existence here as a belt-and-suspenders check.
+#[tauri::command]
+fn open_in_notepad(path: String) -> Result<(), String> {
+    let p = std::path::Path::new(&path);
+    if !p.exists() {
+        return Err(format!("Notes file not found: {}", p.display()));
+    }
+    if !p.is_file() {
+        return Err("Path is not a file".to_string());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        // Explicitly open with notepad.exe, not with the default app.
+        Command::new("notepad.exe")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("Failed to launch Notepad: {e}"))?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        // `open -e` forces TextEdit; plain `open` would pick the default
+        // Markdown viewer which may not be a text editor.
+        Command::new("open")
+            .args(["-e", &path])
+            .spawn()
+            .map_err(|e| format!("Failed to open file: {e}"))?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        Command::new("xdg-open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("Failed to open file: {e}"))?;
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
         .manage(EngineHandle(Mutex::new(None)))
-        .invoke_handler(tauri::generate_handler![engine_port])
+        .invoke_handler(tauri::generate_handler![engine_port, restart_app, open_in_notepad])
         .setup(|app| {
             spawn_engine(&app.handle());
             Ok(())

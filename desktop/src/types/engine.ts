@@ -16,7 +16,7 @@ export interface HardwareProfile {
 }
 
 export interface TranscriptionMode {
-  device: "cuda" | "cpu";
+  device: "cuda" | "cpu" | "error";
   model_size: string;
   compute_type: string;
   label: string;
@@ -34,6 +34,9 @@ export interface WhisperStatus {
     loaded: boolean;
     gpu_fallback_reason: string | null;
   } | null;
+  restart_required?: boolean;
+  saved_hardware_preference?: string;
+  active_hardware_preference?: string;
 }
 
 export interface AudioDeviceProbe {
@@ -163,6 +166,9 @@ export interface AppConfig {
     input_gain: number;
     output_gain: number;
     chunk_seconds: number;
+  };
+  transcription: {
+    hardware_mode: "automatic" | "gpu" | "cpu";
   };
   ai: {
     primary_provider: string;

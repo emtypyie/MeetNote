@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, Clock, Copy, FileDown, FileText, FolderOpen, RotateCw, X } from "lucide-react";
-import { openPath } from "@tauri-apps/plugin-opener";
+import { Check, Clock, Copy, FileText, RotateCw, X } from "lucide-react";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { invoke } from "@tauri-apps/api/core";
 import { Badge, Button, Card } from "../components/ui";
 import { engineClient } from "../services/engineClient";
 import { useUIStore } from "../stores/uiStore";
@@ -15,6 +16,9 @@ export function Completion({ meetingId }: { meetingId: string }) {
   const [notesText, setNotesText] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [retrying, setRetrying] = useState(false);
+  const [copyError, setCopyError] = useState<string | null>(null);
+  const [openError, setOpenError] = useState<string | null>(null);
+  const [openingNotes, setOpeningNotes] = useState(false);
   const pollRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   async function load() {
@@ -46,30 +50,51 @@ export function Completion({ meetingId }: { meetingId: string }) {
     }
   }
 
-  async function openNotes() {
-    const { path } = await engineClient.exportPath(meetingId, "md");
-    await openPath(path);
-  }
-
-  async function openDocx() {
-    const { path } = await engineClient.exportPath(meetingId, "docx");
-    await openPath(path);
-  }
-
-  async function openTranscript() {
-    const { path } = await engineClient.transcriptPath(meetingId);
-    await openPath(path);
-  }
-
   async function copyNotes() {
-    if (!notesText) return;
-    await navigator.clipboard.writeText(notesText);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    console.log("Copy Summary clicked");
+    setCopyError(null);
+    if (!notesText) {
+      console.error("copyNotes: notesText is empty");
+      setCopyError("Meeting summary is not available yet.");
+      return;
+    }
+    try {
+      await writeText(notesText);
+      setCopied(true);
+      console.log("Copy succeeded");
+      setTimeout(() => setCopied(false), 1500);
+    } catch (err) {
+      console.error("copyNotes failed:", err);
+      setCopyError("Could not copy the summary to the clipboard.");
+    }
+  }
+
+  async function openNotes() {
+    console.log("Open Notes clicked");
+    setOpenError(null);
+    if (!notesText) {
+      setOpenError("Meeting summary is not available yet.");
+      return;
+    }
+    setOpeningNotes(true);
+    try {
+      // Ask the engine to ensure notes.txt exists (generates it from notes.md
+      // if missing) and return its verified filesystem path.
+      const { path } = await engineClient.exportPath(meetingId, "txt");
+      console.log("Notes path resolved:", path.split(/[\\/]/).pop());
+      // Open specifically in Notepad (Windows) via the Rust command.
+      await invoke<void>("open_in_notepad", { path });
+      console.log("Notes opened");
+    } catch (err) {
+      console.error("openNotes failed:", err);
+      setOpenError("Could not open notes. " + String(err));
+    } finally {
+      setOpeningNotes(false);
+    }
   }
 
   if (!detail) {
-    return <div className="px-8 py-10 text-sm text-[var(--color-text-muted)]">Loading…</div>;
+    return <div className="px-8 py-10 text-sm text-[var(--color-text-muted)]">Loading...</div>;
   }
 
   const { metadata } = detail;
@@ -86,12 +111,20 @@ export function Completion({ meetingId }: { meetingId: string }) {
 
   return (
     <div className="mx-auto max-w-2xl px-8 py-10">
-      <h1 className="text-xl font-semibold text-[var(--color-text)]">
-        {metadata.status === "completed" && !generating ? "Meeting Complete" : "Finishing Up"}
-      </h1>
-      <p className="mt-1 text-sm text-[var(--color-text-muted)]">
-        {metadata.title} · {formatDate(metadata.started_at)} · {formatDuration(metadata.duration_seconds)}
-      </p>
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-xl font-semibold text-[var(--color-text)]">
+            {metadata.status === "completed" && !generating ? "Meeting Complete" : "Finishing Up"}
+          </h1>
+          <p className="mt-1 text-sm text-[var(--color-text-muted)]">
+            {metadata.title} · {formatDate(metadata.started_at)} · {formatDuration(metadata.duration_seconds)}
+          </p>
+        </div>
+        <Button variant="ghost" onClick={() => navigate({ name: "dashboard" })}>
+          <X size={15} />
+          Done
+        </Button>
+      </div>
 
       <Card className="mt-6 divide-y divide-[var(--color-border)] p-0">
         <StatusRow label="Transcript" ok icon={FileText} detail="Saved locally" />
@@ -103,7 +136,7 @@ export function Completion({ meetingId }: { meetingId: string }) {
           icon={Clock}
           detail={
             generating
-              ? "Generating…"
+              ? "Generating..."
               : notesOk
                 ? providerLabel ?? "Completed"
                 : notesFailed
@@ -141,6 +174,18 @@ export function Completion({ meetingId }: { meetingId: string }) {
         </div>
       )}
 
+      {copyError && (
+        <div className="mt-4 rounded-lg border border-[var(--color-warning)]/30 bg-[var(--color-warning)]/10 px-4 py-3 text-xs text-[var(--color-text-muted)]">
+          {copyError}
+        </div>
+      )}
+
+      {openError && (
+        <div className="mt-4 rounded-lg border border-[var(--color-warning)]/30 bg-[var(--color-warning)]/10 px-4 py-3 text-xs text-[var(--color-text-muted)]">
+          {openError}
+        </div>
+      )}
+
       {notesOk && notesText && (
         <Card className="mt-4 max-h-72 overflow-y-auto p-4">
           <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-[var(--color-text)]">
@@ -149,27 +194,31 @@ export function Completion({ meetingId }: { meetingId: string }) {
         </Card>
       )}
 
+      {!notesOk && !generating && (
+        <p className="mt-4 text-xs text-[var(--color-text-muted)]">
+          Meeting summary is not available yet.
+        </p>
+      )}
+
       <div className="mt-6 flex flex-wrap gap-2">
-        <Button variant="primary" onClick={openNotes} disabled={!notesOk}>
-          <FileText size={15} />
-          Open Notes
-        </Button>
-        <Button variant="secondary" onClick={openDocx} disabled={!notesOk}>
-          <FileDown size={15} />
-          Export DOCX
-        </Button>
-        <Button variant="secondary" onClick={copyNotes} disabled={!notesOk}>
+        <button
+          type="button"
+          onClick={copyNotes}
+          disabled={!notesOk || !notesText}
+          className="inline-flex items-center gap-1.5 rounded-md bg-[var(--color-accent)] px-3 py-1.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-40"
+        >
           {copied ? <Check size={15} /> : <Copy size={15} />}
-          {copied ? "Copied" : "Copy"}
-        </Button>
-        <Button variant="secondary" onClick={openTranscript}>
-          <FolderOpen size={15} />
-          Open Transcript
-        </Button>
-        <Button variant="ghost" onClick={() => navigate({ name: "dashboard" })} className="ml-auto">
-          <X size={15} />
-          Done
-        </Button>
+          {copied ? "Copied" : "Copy Summary"}
+        </button>
+        <button
+          type="button"
+          onClick={openNotes}
+          disabled={!notesOk || openingNotes}
+          className="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1.5 text-sm font-medium text-[var(--color-text)] disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <FileText size={15} />
+          {openingNotes ? "Opening..." : "Open Notes"}
+        </button>
       </div>
     </div>
   );

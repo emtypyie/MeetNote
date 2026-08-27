@@ -40,14 +40,22 @@ def probe_devices() -> DeviceProbeResult:
 
     try:
         mic = sc.default_microphone()
-        mic_ok, mic_name = True, mic.name
+        mic_name = mic.name
+        # Actual capture validation
+        with mic.recorder(samplerate=16000, channels=1):
+            pass
+        mic_ok = True
     except Exception as exc:
         error = f"microphone: {exc}"
 
     try:
         speaker = sc.default_speaker()
-        sc.get_microphone(id=str(speaker.id), include_loopback=True)
-        sys_ok, sys_name = True, speaker.name
+        sys_name = speaker.name
+        sys_mic = sc.get_microphone(id=str(speaker.id), include_loopback=True)
+        # Actual capture validation for system audio loopback
+        with sys_mic.recorder(samplerate=16000, channels=1):
+            pass
+        sys_ok = True
     except Exception as exc:
         error = f"{error}; system audio: {exc}" if error else f"system audio: {exc}"
 

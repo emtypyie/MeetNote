@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { ArrowRight, Cpu } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
+import { ArrowRight, Cpu, RefreshCw } from "lucide-react";
 import { Button, Card, HealthRow, SectionLabel } from "../components/ui";
 import { ProviderStatusRow } from "../components/ProviderStatusRow";
 import { engineClient } from "../services/engineClient";
@@ -49,7 +50,8 @@ export function NewMeeting() {
   }, []);
 
   const whisperReady = !!health?.whisper.loaded;
-  const canStart = whisperReady && title.trim().length > 0 && !starting;
+  const restartRequired = !!health?.whisper?.restart_required;
+  const canStart = whisperReady && title.trim().length > 0 && !starting && !restartRequired;
 
   async function handleStart() {
     setStarting(true);
@@ -149,12 +151,24 @@ export function NewMeeting() {
 
       {error && <p className="mt-3 text-sm text-[var(--color-danger)]">{error}</p>}
 
-      <div className="mt-6 flex justify-end">
-        <Button variant="primary" disabled={!canStart} onClick={handleStart}>
-          {starting ? "Starting…" : "Start Meeting"}
-          <ArrowRight size={16} />
-        </Button>
-      </div>
+      {restartRequired ? (
+        <div className="mt-6 flex flex-col items-end gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-4">
+          <span className="text-sm font-medium text-amber-500">
+            Restart required before starting a meeting.
+          </span>
+          <Button variant="primary" onClick={() => invoke("restart_app")}>
+            <RefreshCw size={16} className="mr-2" />
+            Restart Now
+          </Button>
+        </div>
+      ) : (
+        <div className="mt-6 flex justify-end">
+          <Button variant="primary" disabled={!canStart} onClick={handleStart}>
+            {starting ? "Starting…" : "Start Meeting"}
+            <ArrowRight size={16} />
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
