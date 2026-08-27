@@ -224,16 +224,11 @@ build tools (Windows: MSVC Build Tools + WebView2, usually already present
 on Windows 11; Linux: see [`docs/LINUX_TESTING.md`](docs/LINUX_TESTING.md)).
 
 ```bash
-# Python engine
-# We use the hardware-aware setup script to automatically provision the environment
-# and install GPU dependencies only if an NVIDIA GPU is detected.
+# We use the hardware-aware setup script to automatically provision the environment,
+# install the correct Python dependencies, and run `npm install` for the desktop app.
 python setup.py
 cd engine
 cp .env.example .env                                # then fill in your keys
-
-# Desktop app dependencies
-cd ../desktop
-npm install
 ```
 
 Commands actually used by this project (from `desktop/`, matching

@@ -20,6 +20,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 ENGINE_DIR = PROJECT_ROOT / "engine"
+DESKTOP_DIR = PROJECT_ROOT / "desktop"
 VENV_DIR = ENGINE_DIR / ".venv"
 
 IS_WINDOWS = platform.system() == "Windows"
@@ -118,6 +119,20 @@ def main():
         print("\nGPU dependencies: Skipped")
         if cpu_req.exists() and cpu_req.read_text().strip() and not cpu_req.read_text().strip().startswith("#"):
              run_pip_install(cpu_req)
+
+    # 5. Desktop dependencies
+    print("\n--- Desktop Setup ---")
+    if DESKTOP_DIR.exists() and (DESKTOP_DIR / "package.json").exists():
+        print("Installing desktop dependencies (npm install)...")
+        npm_cmd = "npm.cmd" if IS_WINDOWS else "npm"
+        try:
+            subprocess.check_call([npm_cmd, "install"], cwd=str(DESKTOP_DIR))
+        except FileNotFoundError:
+            print(f"\n[Warning] '{npm_cmd}' not found. Please install Node.js and run 'npm install' in {DESKTOP_DIR.name}/ manually.")
+        except subprocess.CalledProcessError:
+            print(f"\n[Error] Failed to install desktop dependencies. Please run 'npm install' in {DESKTOP_DIR.name}/ manually.")
+    else:
+        print(f"Skipped: {DESKTOP_DIR.name}/package.json not found.")
 
     print("\n--- Setup Complete ---")
     print("Environment successfully provisioned.")
