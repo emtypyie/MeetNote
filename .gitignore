@@ -44,6 +44,31 @@ engine/logs/
 # (~/MeetNote/meetings), outside this repo entirely; this entry only guards
 # against someone pointing "Transcript storage location" at the project dir.
 /meetings/
+/logs/
+/config.json
+/meetnote.db
+*.db
+*.sqlite
+*.sqlite3
+
+# Audio
+*.wav
+*.mp3
+*.m4a
+*.flac
+*.ogg
+*.aac
+
+# Catch-all for potential accidental local dumps
+**/transcripts/
+**/recordings/
+**/summaries/
+**/notes/
+**/audio/
+**/runtime*.json
+**/state*.json
+**/checkpoint*.json
+*.log
 
 # OS
 .DS_Store

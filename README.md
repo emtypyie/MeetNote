@@ -58,8 +58,13 @@ Microphone + System Audio
 Only the resulting transcript text, meeting metadata (title, template,
 timestamps of anything marked important), and derived analysis are sent to
 Groq/Gemini — and only after the meeting ends, only if a key is configured,
-and local recording/transcription work identically whether or not that's
-the case.
+and only to generate the notes.
+
+## Local Data
+
+Meeting transcripts, summaries, chat history, recordings, runtime databases, and logs are local application data and are not committed to Git.
+
+By default, MeetNote stores user runtime data in `~/MeetNote/` on your local machine. This keeps your personal meeting history safely separated from the application source code.
 
 Process-wise:
 
