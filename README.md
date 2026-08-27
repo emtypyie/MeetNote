@@ -25,7 +25,7 @@ below for what's been run, versus only implemented):
 - Groq as the primary AI notes provider, Gemini as the automatic fallback
 - Live AI provider connectivity validation (not just "is a key present" — see [AI provider behavior](#ai-provider-behavior))
 - Structured notes generation (decisions vs. proposals kept distinct, action items, deadlines, open questions)
-- TXT, Markdown, and DOCX notes export
+- TXT and Markdown notes export; Copy Summary to clipboard and Open Notes in Notepad
 - A single root-level launcher (`run_meetnote.py`) that starts the engine, waits for it to be genuinely ready, opens the desktop app, and shuts everything down cleanly on exit
 
 ## Architecture

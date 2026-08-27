@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, Clock, Copy, FileText, RotateCw, X } from "lucide-react";
+import { Check, Clock, Copy, FileText, RotateCw, X, Trash2 } from "lucide-react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { invoke } from "@tauri-apps/api/core";
 import { Badge, Button, Card } from "../components/ui";
@@ -19,18 +19,30 @@ export function Completion({ meetingId }: { meetingId: string }) {
   const [copyError, setCopyError] = useState<string | null>(null);
   const [openError, setOpenError] = useState<string | null>(null);
   const [openingNotes, setOpeningNotes] = useState(false);
+
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [notFound, setNotFound] = useState(false);
   const pollRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   async function load() {
-    const d = await engineClient.getMeeting(meetingId);
-    setDetail(d);
-    if (d.metadata.notes_status === "completed") {
-      const { text } = await engineClient.notesText(meetingId);
-      setNotesText(text);
-    }
-    const stillWorking = GENERATING_STATUSES.has(d.metadata.status) || d.metadata.notes_status === "not_started";
-    if (stillWorking) {
-      pollRef.current = setTimeout(load, 2000);
+    try {
+      const d = await engineClient.getMeeting(meetingId);
+      setDetail(d);
+      if (d.metadata.notes_status === "completed") {
+        const { text } = await engineClient.notesText(meetingId);
+        setNotesText(text);
+      }
+      const stillWorking = GENERATING_STATUSES.has(d.metadata.status) || d.metadata.notes_status === "not_started";
+      if (stillWorking) {
+        pollRef.current = setTimeout(load, 2000);
+      }
+    } catch (err: unknown) {
+      const msg = String((err as { message?: string })?.message ?? err);
+      if (msg.includes("404") || msg.toLowerCase().includes("not found")) {
+        setNotFound(true);
+      }
     }
   }
 
@@ -91,6 +103,16 @@ export function Completion({ meetingId }: { meetingId: string }) {
     } finally {
       setOpeningNotes(false);
     }
+  }
+
+  if (notFound) {
+    return (
+      <div className="mx-auto max-w-2xl px-8 py-16 text-center">
+        <p className="mb-1 text-base font-medium text-[var(--color-text)]">This meeting no longer exists.</p>
+        <p className="mb-6 text-sm text-[var(--color-text-muted)]">It may have been deleted.</p>
+        <Button variant="secondary" onClick={() => navigate({ name: "dashboard" })}>Back to Dashboard</Button>
+      </div>
+    );
   }
 
   if (!detail) {
@@ -219,7 +241,56 @@ export function Completion({ meetingId }: { meetingId: string }) {
           <FileText size={15} />
           {openingNotes ? "Opening..." : "Open Notes"}
         </button>
+        <button
+          type="button"
+          onClick={() => setShowConfirm(true)}
+          className="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-danger)] bg-transparent px-3 py-1.5 text-sm font-medium text-[var(--color-danger)] hover:bg-[var(--color-danger-soft)] disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <Trash2 size={15} />
+          Delete Meeting
+        </button>
       </div>
+
+      {showConfirm && (
+        <div className="mt-4 rounded-xl border border-[var(--color-danger)]/40 bg-[var(--color-danger-soft)] p-5">
+          <p className="mb-1 text-sm font-semibold text-[var(--color-danger)]">Delete meeting?</p>
+          <p className="mb-1 text-sm text-[var(--color-text)] font-medium">&ldquo;{metadata.title}&rdquo;</p>
+          <p className="mb-4 text-xs text-[var(--color-text-muted)]">
+            This will permanently delete this meeting, including its transcript, summary, notes,
+            and associated files.<br />
+            This action cannot be undone.
+          </p>
+          {deleteError && (
+            <p className="mb-3 text-xs text-[var(--color-danger)]">{deleteError}</p>
+          )}
+          <div className="flex gap-2">
+            <Button variant="secondary" size="sm" onClick={() => { setShowConfirm(false); setDeleteError(null); }} disabled={isDeleting}>Cancel</Button>
+            <Button variant="danger" size="sm" onClick={async () => {
+              setIsDeleting(true);
+              setDeleteError(null);
+              try {
+                const res = await engineClient.deleteMeeting(meetingId);
+                if (res.success) {
+                  navigate({ name: "dashboard", flashMessage: "Meeting deleted." });
+                } else {
+                  setDeleteError("Could not delete this meeting. Your meeting data has not been removed.");
+                }
+              } catch (err: unknown) {
+                const msg = String((err as { message?: string })?.message ?? err);
+                if (msg.toLowerCase().includes("active")) {
+                  setDeleteError("This meeting is still active and cannot be deleted.");
+                } else {
+                  setDeleteError("Could not delete this meeting. Your meeting data has not been removed.");
+                }
+              } finally {
+                setIsDeleting(false);
+              }
+            }} disabled={isDeleting}>
+              {isDeleting ? "Deleting..." : "Delete Meeting"}
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

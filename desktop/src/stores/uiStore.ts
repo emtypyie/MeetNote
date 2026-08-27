@@ -1,7 +1,7 @@
 import { create } from "zustand";
 
 export type View =
-  | { name: "dashboard" }
+  | { name: "dashboard"; flashMessage?: string }
   | { name: "new-meeting" }
   | { name: "meeting" }
   | { name: "completion"; meetingId: string }

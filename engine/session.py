@@ -35,6 +35,7 @@ class MeetingSession:
         audio_capture: AudioCapture,
         chunk_seconds: float,
         broadcast: BroadcastFn,
+        output_language: str = "en",
         start_index: int = 0,
         initial_elapsed_seconds: float = 0.0,
         initial_state: MeetingState = MeetingState.PREPARING,
@@ -47,7 +48,9 @@ class MeetingSession:
         self.broadcast = broadcast
 
         self.state = MeetingStateMachine(initial_state)
-        self.pipeline = TranscriptionPipeline(transcriber, self._on_chunk_result, start_index=start_index)
+        self.pipeline = TranscriptionPipeline(
+            transcriber, self._on_chunk_result, output_language=output_language, start_index=start_index
+        )
 
         self._elapsed_at_last_pause = initial_elapsed_seconds  # seconds of recorded (non-paused) time so far
         self._segment_start_wall: Optional[float] = None  # time.monotonic() when current run started

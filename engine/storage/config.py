@@ -28,6 +28,7 @@ DEFAULT_CONFIG = {
     },
     "transcription": {
         "hardware_mode": "automatic",
+        "output_language": "en",
     },
     "ai": {
         "primary_provider": "groq",

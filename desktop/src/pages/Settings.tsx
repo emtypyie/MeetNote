@@ -299,6 +299,22 @@ export function Settings() {
       </Card>
 
       <Card className="mt-4 p-5">
+        <SectionLabel>Language & Translation</SectionLabel>
+        <Field label="Transcript output language">
+          <select
+            value={config.transcription?.output_language || "en"}
+            onChange={(e) => save({ transcription: { ...config.transcription, output_language: e.target.value } })}
+            className={selectClass}
+          >
+            <option value="en">English</option>
+          </select>
+          <p className="mt-2 text-xs text-[var(--color-text-faint)]">
+            MeetNote will automatically detect the spoken language. If it is not English, it will be translated to English.
+          </p>
+        </Field>
+      </Card>
+
+      <Card className="mt-4 p-5">
         <div className="flex items-center justify-between">
           <SectionLabel>AI</SectionLabel>
           <Button variant="ghost" size="sm" onClick={recheckProviders} disabled={rechecking}>

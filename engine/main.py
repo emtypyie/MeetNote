@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import shutil
 import threading
 import uuid
 from contextlib import asynccontextmanager
@@ -47,7 +48,7 @@ from state.machine import MeetingState
 from storage import db
 from storage.config import load_config, save_config
 from storage.meeting_store import MeetingStore
-from storage.paths import ensure_dirs, set_storage_root, storage_root
+from storage.paths import ensure_dirs, meetings_root, set_storage_root, storage_root
 
 logger = logging.getLogger("meetnote.main")
 
@@ -364,32 +365,68 @@ def get_meeting_detail(meeting_id: str):
     }
 
 
+@app.delete("/meetings/{meeting_id}")
+def delete_meeting(meeting_id: str):
+    row = db.get_meeting(meeting_id)
+    if row is None:
+        raise HTTPException(404, "Meeting not found")
+
+    if row["status"] in ("recording", "paused"):
+        raise HTTPException(400, "Cannot delete an active meeting")
+
+    meeting_dir = Path(row["meeting_dir"]).resolve()
+    base_dir = meetings_root().resolve()
+
+    if not str(meeting_dir).startswith(str(base_dir)):
+        raise HTTPException(400, "Invalid meeting path")
+
+    if meeting_dir.exists() and meeting_dir.is_dir():
+        import stat as _stat
+
+        def _remove_readonly(func, path, exc_info):
+            """onerror handler: clear read-only flag and retry, else log and continue."""
+            try:
+                os.chmod(path, _stat.S_IWRITE)
+                func(path)
+            except Exception:
+                # File may be locked by another process (e.g. a note file still open).
+                # Skip it — leftover files will be cleaned up on next OS reboot or
+                # when the lock is released.
+                pass
+
+        shutil.rmtree(meeting_dir, onerror=_remove_readonly)
+
+    db.delete_meeting(meeting_id)
+
+    global engine_state
+    if engine_state.active_session and engine_state.active_session.meeting_id == meeting_id:
+        engine_state.active_session = None
+
+    return {"success": True, "meeting_id": meeting_id}
+
+
 @app.get("/meetings/{meeting_id}/export/{fmt}")
 def export_meeting(meeting_id: str, fmt: str):
-    if fmt not in ("txt", "md", "docx"):
-        raise HTTPException(400, "format must be one of: txt, md, docx")
+    if fmt not in ("txt", "md"):
+        raise HTTPException(400, "format must be one of: txt, md")
     row = db.get_meeting(meeting_id)
     if row is None:
         raise HTTPException(404, "Meeting not found")
     meeting_dir = Path(row["meeting_dir"])
     store = MeetingStore.load(meeting_dir)
 
-    filename = {"txt": "notes.txt", "md": "notes.md", "docx": "notes.docx"}[fmt]
+    filename = {"txt": "notes.txt", "md": "notes.md"}[fmt]
     path = meeting_dir / filename
     if not path.exists():
         if store.metadata.get("notes_status") != "completed":
             raise HTTPException(409, "Notes have not been generated for this meeting yet")
-        
+
         notes_md_path = meeting_dir / "notes.md"
         if not notes_md_path.exists():
             raise HTTPException(500, f"Expected export file missing: {filename} and notes.md is also missing")
-            
+
         notes_markdown = notes_md_path.read_text(encoding="utf-8")
-        if fmt == "docx":
-            from export.docx import write_docx
-            meeting_date = (store.metadata.get("started_at") or "")[:10]
-            write_docx(meeting_dir, store.metadata.get("title", "Meeting Notes"), meeting_date, notes_markdown)
-        elif fmt == "txt":
+        if fmt == "txt":
             from export.txt import write_notes_txt
             write_notes_txt(meeting_dir, notes_markdown)
 
@@ -479,12 +516,14 @@ def start_meeting(body: StartMeetingBody):
             transcription_mode=engine_state.transcriber.status(),
         )
         chunk_seconds = float(engine_state.config["audio"].get("chunk_seconds", 25))
+        output_language = engine_state.config.get("transcription", {}).get("output_language", "en")
         session = MeetingSession(
             meeting_id=meeting_id,
             store=store,
             transcriber=engine_state.transcriber,
             audio_capture=audio_capture,
             chunk_seconds=chunk_seconds,
+            output_language=output_language,
             broadcast=engine_state.broadcast,
         )
         try:
@@ -605,12 +644,14 @@ def resume_after_restart(meeting_id: str):
             raise HTTPException(500, str(exc)) from exc
 
         chunk_seconds = float(engine_state.config["audio"].get("chunk_seconds", 25))
+        output_language = engine_state.config.get("transcription", {}).get("output_language", "en")
         session = MeetingSession(
             meeting_id=meeting_id,
             store=store,
             transcriber=engine_state.transcriber,
             audio_capture=audio_capture,
             chunk_seconds=chunk_seconds,
+            output_language=output_language,
             broadcast=engine_state.broadcast,
             start_index=next_index,
             initial_elapsed_seconds=last_end_offset,

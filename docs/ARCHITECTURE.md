@@ -74,7 +74,7 @@ engine/
 │   ├── analysis/service.py               Orchestrates analysis -> notes -> validate
 │   ├── validation/checks.py               Deterministic QC (spec section 22)
 │   └── templates.py                       User-configurable note templates
-└── export/                              txt / md / docx writers
+└── export/                              txt / md writers (notes.txt, notes.md)
 ```
 
 ## Data flow (recording)

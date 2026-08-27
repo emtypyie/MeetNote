@@ -106,10 +106,11 @@ export const engineClient = {
 
   recheckAIProviders: () => request<AIProviderStatus>("/ai/recheck", { method: "POST" }),
 
-  exportPath: (id: string, fmt: "txt" | "md" | "docx") => request<{ path: string }>(`/meetings/${id}/export/${fmt}`),
+  exportPath: (id: string, fmt: "txt" | "md") => request<{ path: string }>(`/meetings/${id}/export/${fmt}`),
   notesText: (id: string) => request<{ text: string | null }>(`/meetings/${id}/notes-text`),
   transcriptPath: (id: string) => request<{ path: string }>(`/meetings/${id}/transcript-path`),
   folderPath: (id: string) => request<{ path: string }>(`/meetings/${id}/folder-path`),
+  deleteMeeting: (id: string) => request<{ success: boolean; meeting_id: string }>(`/meetings/${id}`, { method: "DELETE" }),
 };
 
 export { EngineUnavailableError };

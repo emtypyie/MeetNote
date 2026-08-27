@@ -101,3 +101,8 @@ def unfinished_meetings() -> list[dict]:
             terminal,
         ).fetchall()
     return [dict(r) for r in rows if Path(r["meeting_dir"]).exists()]
+
+
+def delete_meeting(meeting_id: str) -> None:
+    with _connect() as conn:
+        conn.execute("DELETE FROM meetings WHERE meeting_id = ?", (meeting_id,))

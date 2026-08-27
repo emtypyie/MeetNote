@@ -11,7 +11,6 @@ import logging
 from pathlib import Path
 from typing import Callable
 
-from export.docx import write_docx
 from export.markdown import write_markdown
 from export.txt import write_notes_txt
 from intelligence.analysis.service import NotesGenerationFailed, generate_notes
@@ -70,7 +69,6 @@ def run_ai_pipeline(meeting_id: str, ai_router: AIRouter, broadcast: BroadcastFn
 
     write_markdown(meeting_dir, result.notes_markdown)
     write_notes_txt(meeting_dir, result.notes_markdown)
-    write_docx(meeting_dir, store.metadata["title"], meeting_date, result.notes_markdown)
 
     warning_messages = [w.message for w in result.warnings]
     store.set_notes_result(result.provider_used, "completed", warning_messages)

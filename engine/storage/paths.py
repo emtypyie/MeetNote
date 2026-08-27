@@ -11,7 +11,7 @@
           transcript.txt
           transcript.json
           notes.md
-          notes.docx
+          notes.txt
 
 The storage root is overridable via config (Settings > Storage >
 "Transcript storage location"); `set_storage_root` is called once at

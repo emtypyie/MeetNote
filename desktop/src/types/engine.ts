@@ -167,8 +167,9 @@ export interface AppConfig {
     output_gain: number;
     chunk_seconds: number;
   };
-  transcription: {
-    hardware_mode: "automatic" | "gpu" | "cpu";
+  transcription?: {
+    hardware_mode?: "automatic" | "gpu" | "cpu";
+    output_language?: string;
   };
   ai: {
     primary_provider: string;

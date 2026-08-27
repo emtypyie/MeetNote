@@ -8,8 +8,19 @@ import type { MeetingSummary } from "../types/engine";
 
 export function Dashboard() {
   const navigate = useUIStore((s) => s.navigate);
+  const view = useUIStore((s) => s.view);
   const [meetings, setMeetings] = useState<MeetingSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [flashMessage, setFlashMessage] = useState<string | null>(null);
+
+  // Pick up any flash message passed when navigating to Dashboard (e.g. after deletion)
+  useEffect(() => {
+    if (view.name === "dashboard" && view.flashMessage) {
+      setFlashMessage(view.flashMessage);
+      const t = setTimeout(() => setFlashMessage(null), 4000);
+      return () => clearTimeout(t);
+    }
+  }, [view]);
 
   useEffect(() => {
     let cancelled = false;
@@ -31,6 +42,12 @@ export function Dashboard() {
           Start New Meeting
         </Button>
       </div>
+
+      {flashMessage && (
+        <div className="mt-4 rounded-md border border-[var(--color-success)]/30 bg-[var(--color-success)]/10 px-4 py-3 text-sm text-[var(--color-success)]">
+          {flashMessage}
+        </div>
+      )}
 
       <div className="mt-8">
         <h2 className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-faint)]">
@@ -55,7 +72,11 @@ export function Dashboard() {
 
         <div className="flex flex-col gap-2">
           {meetings?.map((m) => (
-            <MeetingCard key={m.meeting_id} meeting={m} />
+            <MeetingCard
+              key={m.meeting_id}
+              meeting={m}
+              onDelete={(id) => setMeetings((prev) => prev?.filter((x) => x.meeting_id !== id) ?? null)}
+            />
           ))}
         </div>
       </div>
