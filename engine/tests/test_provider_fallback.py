@@ -23,71 +23,95 @@ class FakeProvider(LLMProvider):
         return ConnectivityStatus.CONFIGURED, None
 
 
-def test_primary_success_no_fallback_used():
-    primary = FakeProvider("groq")
-    fallback = FakeProvider("gemini")
-    router = AIRouter(primary, fallback)
+def test_both_configured_gemini_is_primary_and_succeeds():
+    gemini = FakeProvider("gemini")
+    groq = FakeProvider("groq")
+    router = AIRouter(gemini=gemini, groq=groq)
+
+    result = router.complete("sys", "user")
+
+    assert result.provider_name == "gemini"
+    assert groq.calls == 0
+    assert router.last_provider_used == "gemini"
+
+
+def test_gemini_fails_falls_back_to_groq():
+    gemini = FakeProvider("gemini", fail_times=99)
+    groq = FakeProvider("groq")
+    router = AIRouter(gemini=gemini, groq=groq)
 
     result = router.complete("sys", "user")
 
     assert result.provider_name == "groq"
-    assert fallback.calls == 0
     assert router.last_provider_used == "groq"
 
 
-def test_primary_fails_falls_back_to_secondary():
-    # Fails more times than complete()'s internal retry budget, so it must
-    # exhaust the primary and fall through to the fallback provider.
-    primary = FakeProvider("groq", fail_times=99)
-    fallback = FakeProvider("gemini")
-    router = AIRouter(primary, fallback)
+def test_gemini_unconfigured_skips_straight_to_groq():
+    gemini = FakeProvider("gemini", configured=False)
+    groq = FakeProvider("groq")
+    router = AIRouter(gemini=gemini, groq=groq)
 
     result = router.complete("sys", "user")
 
-    assert result.provider_name == "gemini"
-    assert router.last_provider_used == "gemini"
+    assert result.provider_name == "groq"
+    assert gemini.calls == 0
 
 
-def test_unconfigured_primary_skips_straight_to_fallback():
-    primary = FakeProvider("groq", configured=False)
-    fallback = FakeProvider("gemini")
-    router = AIRouter(primary, fallback)
+def test_groq_only_succeeds():
+    gemini = FakeProvider("gemini", configured=False)
+    groq = FakeProvider("groq", configured=True)
+    router = AIRouter(gemini=gemini, groq=groq)
 
     result = router.complete("sys", "user")
+    assert result.provider_name == "groq"
 
+
+def test_gemini_only_succeeds():
+    gemini = FakeProvider("gemini", configured=True)
+    groq = FakeProvider("groq", configured=False)
+    router = AIRouter(gemini=gemini, groq=groq)
+
+    result = router.complete("sys", "user")
     assert result.provider_name == "gemini"
-    assert primary.calls == 0
 
 
 def test_both_providers_failing_raises():
-    primary = FakeProvider("groq", fail_times=99)
-    fallback = FakeProvider("gemini", fail_times=99)
-    router = AIRouter(primary, fallback)
+    gemini = FakeProvider("gemini", fail_times=99)
+    groq = FakeProvider("groq", fail_times=99)
+    router = AIRouter(gemini=gemini, groq=groq)
 
     try:
         router.complete("sys", "user")
         assert False, "expected AllProvidersFailedError"
     except AllProvidersFailedError as exc:
-        assert "groq" in exc.attempts
         assert "gemini" in exc.attempts
+        assert "groq" in exc.attempts
+
+
+def test_neither_configured_raises():
+    gemini = FakeProvider("gemini", configured=False)
+    groq = FakeProvider("groq", configured=False)
+    router = AIRouter(gemini=gemini, groq=groq)
+
+    try:
+        router.complete("sys", "user")
+        assert False, "expected AllProvidersFailedError"
+    except AllProvidersFailedError as exc:
+        pass
 
 
 def test_non_retryable_failure_does_not_retry_same_provider():
-    primary = FakeProvider("groq", fail_times=1, retryable=False)
-    fallback = FakeProvider("gemini")
-    router = AIRouter(primary, fallback)
+    gemini = FakeProvider("gemini", fail_times=1, retryable=False)
+    groq = FakeProvider("groq")
+    router = AIRouter(gemini=gemini, groq=groq)
 
     router.complete("sys", "user")
 
     # non-retryable -> exactly one call attempted before falling back
-    assert primary.calls == 1
+    assert gemini.calls == 1
 
 
 class ProbingFakeProvider(FakeProvider):
-    """A FakeProvider whose connectivity probe result is controllable, to
-    test AIRouter's connectivity-status handling distinctly from its
-    request-fallback handling above."""
-
     def __init__(self, name: str, configured: bool, probe_result):
         super().__init__(name, configured=configured)
         self.probe_result = probe_result
@@ -99,45 +123,45 @@ class ProbingFakeProvider(FakeProvider):
 
 
 def test_unconfigured_provider_status_is_not_configured_without_probing():
-    primary = ProbingFakeProvider("groq", configured=False, probe_result=(ConnectivityStatus.CONFIGURED, None))
-    fallback = ProbingFakeProvider("gemini", configured=False, probe_result=(ConnectivityStatus.CONFIGURED, None))
-    router = AIRouter(primary, fallback)
+    gemini = ProbingFakeProvider("gemini", configured=False, probe_result=(ConnectivityStatus.CONFIGURED, None))
+    groq = ProbingFakeProvider("groq", configured=False, probe_result=(ConnectivityStatus.CONFIGURED, None))
+    router = AIRouter(gemini=gemini, groq=groq)
 
     status = router.status()
 
-    assert status["primary"]["status"] == ConnectivityStatus.NOT_CONFIGURED.value
-    assert status["primary"]["configured"] is False
+    assert status["gemini"]["status"] == ConnectivityStatus.NOT_CONFIGURED.value
+    assert status["gemini"]["configured"] is False
     # test_connection() short-circuits before ever calling _probe_connection
     # for an unconfigured provider — there's no key to test.
     router.refresh_connectivity()
-    assert primary.probe_calls == 0
+    assert gemini.probe_calls == 0
 
 
 def test_configured_but_invalid_key_reports_auth_failed_not_unconfigured():
-    primary = ProbingFakeProvider(
-        "groq", configured=True, probe_result=(ConnectivityStatus.AUTH_FAILED, "invalid api key")
+    gemini = ProbingFakeProvider(
+        "gemini", configured=True, probe_result=(ConnectivityStatus.AUTH_FAILED, "invalid api key")
     )
-    fallback = ProbingFakeProvider("gemini", configured=False, probe_result=(ConnectivityStatus.CONFIGURED, None))
-    router = AIRouter(primary, fallback)
+    groq = ProbingFakeProvider("groq", configured=False, probe_result=(ConnectivityStatus.CONFIGURED, None))
+    router = AIRouter(gemini=gemini, groq=groq)
 
     router.refresh_connectivity()
     status = router.status()
 
-    assert status["primary"]["configured"] is True
-    assert status["primary"]["status"] == ConnectivityStatus.AUTH_FAILED.value
-    assert status["primary"]["error"] == "invalid api key"
+    assert status["gemini"]["configured"] is True
+    assert status["gemini"]["status"] == ConnectivityStatus.AUTH_FAILED.value
+    assert status["gemini"]["error"] == "invalid api key"
 
 
 def test_configured_and_working_key_reports_configured():
-    primary = ProbingFakeProvider("groq", configured=True, probe_result=(ConnectivityStatus.CONFIGURED, None))
-    fallback = ProbingFakeProvider("gemini", configured=True, probe_result=(ConnectivityStatus.CONFIGURED, None))
-    router = AIRouter(primary, fallback)
+    gemini = ProbingFakeProvider("gemini", configured=True, probe_result=(ConnectivityStatus.CONFIGURED, None))
+    groq = ProbingFakeProvider("groq", configured=True, probe_result=(ConnectivityStatus.CONFIGURED, None))
+    router = AIRouter(gemini=gemini, groq=groq)
 
     router.refresh_connectivity()
     status = router.status()
 
-    assert status["primary"]["status"] == ConnectivityStatus.CONFIGURED.value
-    assert status["fallback"]["status"] == ConnectivityStatus.CONFIGURED.value
+    assert status["gemini"]["status"] == ConnectivityStatus.CONFIGURED.value
+    assert status["groq"]["status"] == ConnectivityStatus.CONFIGURED.value
 
 
 def test_provider_that_raises_during_probe_reports_unavailable_not_a_crash():
@@ -145,12 +169,10 @@ def test_provider_that_raises_during_probe_reports_unavailable_not_a_crash():
         def _probe_connection(self):
             raise RuntimeError("boom")
 
-    primary = ExplodingProvider("groq", configured=True)
-    fallback = FakeProvider("gemini", configured=False)
-    router = AIRouter(primary, fallback)
+    gemini = ExplodingProvider("gemini", configured=True)
+    groq = FakeProvider("groq", configured=False)
+    router = AIRouter(gemini=gemini, groq=groq)
 
-    # Must not raise — a broken/crashing probe must degrade to UNAVAILABLE,
-    # never take the caller (and by extension the engine) down with it.
     router.refresh_connectivity()
     status = router.status()
-    assert status["primary"]["status"] == ConnectivityStatus.UNAVAILABLE.value
+    assert status["gemini"]["status"] == ConnectivityStatus.UNAVAILABLE.value

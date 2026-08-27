@@ -6,7 +6,86 @@ import { ProviderStatusRow } from "../components/ProviderStatusRow";
 import { engineClient } from "../services/engineClient";
 import { useMeetingStore } from "../stores/meetingStore";
 import { useUIStore } from "../stores/uiStore";
-import type { HealthResponse, NoteTemplate } from "../types/engine";
+import type { HealthResponse, NoteTemplate, AIProviderStatus } from "../types/engine";
+
+function getAiStatusMessage(ai: AIProviderStatus | null | undefined): React.ReactNode {
+  if (!ai) return (
+    <>
+      No AI provider is configured.<br />
+      Meetings will still record and transcribe locally.<br />
+      AI notes will remain pending until Gemini or Groq is configured.
+    </>
+  );
+
+  const gOk = ai.gemini.status === "configured";
+  const qOk = ai.groq.status === "configured";
+  const gNotConf = ai.gemini.status === "not_configured";
+  const qNotConf = ai.groq.status === "not_configured";
+
+  if (gNotConf && qNotConf) {
+    return (
+      <>
+        No AI provider is configured.<br />
+        Meetings will still record and transcribe locally.<br />
+        AI notes will remain pending until Gemini or Groq is configured.
+      </>
+    );
+  }
+
+  if (!gOk && !qOk) {
+    return (
+      <>
+        No AI provider is currently available.<br />
+        Meetings will still record and transcribe locally.
+      </>
+    );
+  }
+
+  if (!gOk && qOk && !gNotConf) {
+    return "Gemini is unavailable. Groq will be used for AI notes.";
+  }
+
+  if (gOk && !qOk && !qNotConf) {
+    return "Gemini is available. Groq is unavailable.";
+  }
+
+  if (gOk && qOk) {
+    return (
+      <>
+        Gemini will be used as the primary AI provider.<br/>
+        Groq will be used as the fallback if Gemini is unavailable.
+      </>
+    );
+  }
+
+  if (gOk) {
+    return "Gemini is configured and will be used for AI note generation.";
+  }
+  
+  if (qOk) {
+    return "Groq is configured and will be used for AI note generation.";
+  }
+
+  return null;
+}
+
+function getRoutingMessage(ai: AIProviderStatus | null | undefined): string {
+  if (!ai) return "Unavailable";
+  const gOk = ai.gemini.status === "configured";
+  const qOk = ai.groq.status === "configured";
+  const gNotConf = ai.gemini.status === "not_configured";
+  const qNotConf = ai.groq.status === "not_configured";
+
+  if (gNotConf && qNotConf) return "Unavailable";
+  if (!gOk && !qOk) return "Unavailable";
+  if (gOk && qOk) return "Gemini → Groq fallback";
+  if (gOk && !qOk && !qNotConf) return "Gemini";
+  if (!gOk && qOk && !gNotConf) return "Groq";
+  if (gOk) return "Gemini";
+  if (qOk) return "Groq";
+  
+  return "Unavailable";
+}
 
 export function NewMeeting() {
   const navigate = useUIStore((s) => s.navigate);
@@ -127,8 +206,17 @@ export function NewMeeting() {
           detail={health?.hardware?.cuda_usable ? health?.hardware?.gpu_name ?? undefined : "CPU mode"}
         />
         <HealthRow label="Local Storage" ok={!!health?.storage.ok} />
-        <ProviderStatusRow label="Groq API" provider={health?.ai_providers?.primary} />
-        <ProviderStatusRow label="Gemini API" provider={health?.ai_providers?.fallback} />
+        <ProviderStatusRow label="Groq API" provider={health?.ai_providers?.groq} />
+        <ProviderStatusRow label="Gemini API" provider={health?.ai_providers?.gemini} />
+
+        <div className="flex items-center justify-between py-2 border-b border-[var(--color-border)] last:border-b-0">
+          <div className="flex items-center gap-2.5">
+            <span className="text-sm font-medium text-[var(--color-text)]">AI notes</span>
+          </div>
+          <div className="text-right text-xs text-[var(--color-text-muted)]">
+            {getRoutingMessage(health?.ai_providers)}
+          </div>
+        </div>
 
         {health?.transcription_mode && (
           <div className="mt-3 flex items-center gap-2 rounded-lg bg-[var(--color-surface-2)] px-3 py-2 text-xs text-[var(--color-text-muted)]">
@@ -141,12 +229,9 @@ export function NewMeeting() {
           </div>
         )}
 
-        {!health?.ai_providers?.primary.configured && !health?.ai_providers?.fallback.configured && (
-          <p className="mt-3 text-xs text-[var(--color-text-faint)]">
-            No AI provider is configured yet, so the meeting will still record and transcribe locally —
-            AI notes generation will be marked pending until a Groq or Gemini key is added in Settings.
-          </p>
-        )}
+        <p className="mt-3 text-xs text-[var(--color-text-faint)] leading-relaxed">
+          {getAiStatusMessage(health?.ai_providers)}
+        </p>
       </Card>
 
       {error && <p className="mt-3 text-sm text-[var(--color-danger)]">{error}</p>}

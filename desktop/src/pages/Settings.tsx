@@ -321,11 +321,32 @@ export function Settings() {
             {rechecking ? "Checking…" : "Recheck"}
           </Button>
         </div>
-        <ProviderStatusRow label="Groq API (primary)" provider={health?.ai_providers?.primary} />
-        <ProviderStatusRow label="Gemini API (fallback)" provider={health?.ai_providers?.fallback} />
+        <ProviderStatusRow label="Gemini API" provider={health?.ai_providers?.gemini} />
+        <ProviderStatusRow label="Groq API" provider={health?.ai_providers?.groq} />
+        
+        {health?.ai_providers?.primary && (
+          <div className="mt-3 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3">
+            <p className="text-xs font-medium text-[var(--color-text)] mb-1">Active Configuration</p>
+            <div className="flex justify-between items-center text-xs">
+              <span className="text-[var(--color-text-muted)]">Primary</span>
+              <span className="text-[var(--color-text)] capitalize">{health.ai_providers.primary}</span>
+            </div>
+            {health.ai_providers.fallback && (
+              <div className="flex justify-between items-center text-xs mt-1">
+                <span className="text-[var(--color-text-muted)]">Fallback</span>
+                <span className="text-[var(--color-text)] capitalize">{health.ai_providers.fallback}</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        <p className="mt-3 text-xs text-[var(--color-text-faint)]">
+          Configure either Gemini or Groq in the MeetNote environment.
+          When both are configured, Gemini is used first and Groq is used as fallback.
+        </p>
         <p className="mt-2 text-xs text-[var(--color-text-faint)]">
-          API keys are never entered in the app. Add <code>GROQ_API_KEY</code> and/or{" "}
-          <code>GEMINI_API_KEY</code> to <code>engine/.env</code> (copy from{" "}
+          API keys are never entered in the app. Add <code>GEMINI_API_KEY</code> and/or{" "}
+          <code>GROQ_API_KEY</code> to <code>engine/.env</code> (copy from{" "}
           <code>engine/.env.example</code>) and restart MeetNote. &ldquo;Recheck&rdquo; makes a small,
           free, read-only call to each provider to confirm the key actually works, not just that it's
           present.

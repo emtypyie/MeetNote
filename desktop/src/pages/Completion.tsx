@@ -126,7 +126,7 @@ export function Completion({ meetingId }: { meetingId: string }) {
   const notesFailed = notesStatus === "pending" || notesStatus === "failed";
   const providerLabel =
     metadata.ai_provider_used === "gemini"
-      ? "Gemini (fallback)"
+      ? "Gemini"
       : metadata.ai_provider_used === "groq"
         ? "Groq"
         : null;

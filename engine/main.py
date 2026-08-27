@@ -163,8 +163,8 @@ async def lifespan(app: FastAPI):
 
     ai_cfg = engine_state.config["ai"]
     engine_state.ai_router = AIRouter(
-        primary=GroqProvider(model=ai_cfg["groq_model"]),
-        fallback=GeminiProvider(model=ai_cfg["gemini_model"]),
+        gemini=GeminiProvider(model=ai_cfg.get("gemini_model", "gemini-1.5-flash-latest")),
+        groq=GroqProvider(model=ai_cfg.get("groq_model", "llama3-8b-8192")),
     )
     # A live connectivity check (not just "is a key present") runs in the
     # background so a wrong/expired key surfaces as such in the UI instead

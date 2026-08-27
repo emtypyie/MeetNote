@@ -64,9 +64,10 @@ export interface ProviderStatus {
 }
 
 export interface AIProviderStatus {
-  primary: ProviderStatus;
-  fallback: ProviderStatus;
-  last_provider_used: string | null;
+  gemini: ProviderStatus;
+  groq: ProviderStatus;
+  primary: string | null;
+  fallback: string | null;
 }
 
 export interface HealthResponse {
