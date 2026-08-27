@@ -225,10 +225,10 @@ on Windows 11; Linux: see [`docs/LINUX_TESTING.md`](docs/LINUX_TESTING.md)).
 
 ```bash
 # Python engine
+# We use the hardware-aware setup script to automatically provision the environment
+# and install GPU dependencies only if an NVIDIA GPU is detected.
+python setup.py
 cd engine
-python -m venv .venv
-.venv\Scripts\pip install -r requirements.txt      # Windows
-# .venv/bin/pip install -r requirements.txt        # Linux/macOS
 cp .env.example .env                                # then fill in your keys
 
 # Desktop app dependencies

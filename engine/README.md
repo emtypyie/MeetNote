@@ -9,11 +9,10 @@ module map.
 ## Setup
 
 ```bash
-python -m venv .venv
-# Windows:
-.venv\Scripts\pip install -r requirements.txt
-# Linux/macOS:
-.venv/bin/pip install -r requirements.txt
+# Run the hardware-aware setup script from the repository root:
+cd ..
+python setup.py
+# (It will automatically detect an NVIDIA GPU and install the right packages into engine/.venv)
 
 cp .env.example .env   # then fill in GROQ_API_KEY / GEMINI_API_KEY (optional)
 ```
@@ -46,7 +45,7 @@ GPU, microphone, or API keys.
 ## GPU note (Windows)
 
 If GPU transcription fails with `Could not locate cudnn_ops64_9.dll`, make
-sure `pip install -r requirements.txt` fully completed — it includes
-`nvidia-cudnn-cu12`/`nvidia-cublas-cu12`, which `cuda_env.py` needs on disk
+sure you installed GPU support. Run `python setup.py --gpu` from the root.
+It will install `nvidia-cudnn-cu12`/`nvidia-cublas-cu12`, which `cuda_env.py` needs on disk
 to register. See ARCHITECTURE.md's "GPU/CUDA notes" for why this is needed
 at all.

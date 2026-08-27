@@ -238,8 +238,8 @@ def print_validation_failure(report: ValidationReport) -> None:
             print(f"Missing or invalid: {name}")
             if detail:
                 print(f"  {detail}")
-    print("\nPlease install the project dependencies and try again.")
-    print("See README.md / engine/README.md for setup instructions.\n")
+    print("\nPlease run the setup script to install dependencies:")
+    print("  python setup.py\n")
 
 
 # ---------------------------------------------------------------------------
@@ -606,8 +606,15 @@ def run_diagnostics() -> int:
     print()
     if hw.get("os"):
         print(f"OS (precise, from engine detection): {hw['os']}")
-    print(f"GPU: {hw.get('gpu_name') or 'None detected'}")
-    print(f"CUDA: {'Available' if hw.get('cuda_usable') else 'Unavailable'}")
+    gpu_name = hw.get('gpu_name')
+    print(f"GPU Hardware: {gpu_name if gpu_name else 'Not detected'}")
+    if gpu_name:
+        if hw.get('cuda_usable'):
+            print("CUDA Runtime: Installed and usable")
+        else:
+            reason = hw.get('cuda_failure_reason') or 'Missing dependencies'
+            print(f"CUDA Runtime: Unavailable ({reason})")
+            print("  (Hint: run `python setup.py --gpu` if you want to install GPU support)")
     if whisper.get("loaded"):
         print(f"Whisper: Available ({mode.get('device', '?')}, {mode.get('model_size', '?')})")
     elif whisper.get("loading"):
