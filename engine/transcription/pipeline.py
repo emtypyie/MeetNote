@@ -57,10 +57,12 @@ class TranscriptionPipeline:
         self,
         transcriber: WhisperTranscriber,
         on_result: Callable[[ChunkRecord], None],
+        output_language: str = "en",
         start_index: int = 0,
     ):
         self._transcriber = transcriber
         self._on_result = on_result
+        self._output_language = output_language
         self._queue: "queue.Queue[AudioChunk]" = queue.Queue()
         self._stop_event = threading.Event()
         self._worker: Optional[threading.Thread] = None
@@ -113,7 +115,9 @@ class TranscriptionPipeline:
             index = self._next_index
             self._next_index += 1
 
-        result = self._transcriber.transcribe_chunk(chunk.samples, chunk.sample_rate)
+        result = self._transcriber.transcribe_chunk(
+            chunk.samples, chunk.sample_rate, output_language=self._output_language
+        )
         if result.ok:
             text = " ".join(seg.text for seg in result.segments).strip()
             record = ChunkRecord(

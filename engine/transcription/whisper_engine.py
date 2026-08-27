@@ -102,7 +102,7 @@ class WhisperTranscriber:
             logger.info("Whisper model unloaded from %s", self.device)
 
     def transcribe_chunk(
-        self, samples: np.ndarray, sample_rate: int, retries: int = 1
+        self, samples: np.ndarray, sample_rate: int, output_language: str = "en", retries: int = 1
     ) -> ChunkTranscriptionResult:
         """Transcribe one audio chunk. On failure, retries once (per the
         product spec's chunk-failure handling); if it still fails the caller
@@ -114,11 +114,27 @@ class WhisperTranscriber:
         last_error: str | None = None
         for attempt in range(retries + 1):
             try:
+                # Detect language first to avoid unnecessarily translating English
+                lang, prob, _ = self._model.detect_language(samples)
+                
+                if output_language == "en":
+                    task = "translate" if lang != "en" else "transcribe"
+                else:
+                    task = "transcribe"
+                    
                 segments_iter, _info = self._model.transcribe(
                     samples,
-                    language=None,  # auto-detect
+                    language=lang,
+                    task=task,
                     vad_filter=True,
                     beam_size=5,
+                )
+                logger.info(
+                    "Detected language: %s | Output language: %s | Task: %s | Device: %s",
+                    lang,
+                    output_language,
+                    task,
+                    self.device,
                 )
                 segments = [
                     TranscribedSegment(text=s.text.strip(), start=s.start, end=s.end)
