@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Sidebar } from "./components/Sidebar";
 import { RecoveryModal } from "./components/RecoveryModal";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { LoadingScreen } from "./components/LoadingScreen";
 import { Dashboard } from "./pages/Dashboard";
 import { NewMeeting } from "./pages/NewMeeting";
 import { Meeting } from "./pages/Meeting";
@@ -19,29 +20,47 @@ function App() {
   const hydrate = useMeetingStore((s) => s.hydrateFromCurrent);
   const [unfinished, setUnfinished] = useState<MeetingMetadata[]>([]);
   const [checkedRecovery, setCheckedRecovery] = useState(false);
+  const [loadingStatus, setLoadingStatus] = useState<"connecting" | "loading" | "error">("connecting");
 
   useEffect(() => {
     (async () => {
-      // If the engine already has a live session (app window reloaded
-      // without the engine restarting), jump straight back into it rather
-      // than showing the dashboard as if nothing were recording.
-      const wasActive = await hydrate().catch(() => false);
-      if (wasActive) {
-        navigate({ name: "meeting" });
-        setCheckedRecovery(true);
-        return;
-      }
-      const list = await engineClient.listUnfinished().catch(() => []);
-      setUnfinished(list);
-      setCheckedRecovery(true);
+      try {
+        setLoadingStatus("connecting");
 
-      const config = await engineClient.getConfig().catch(() => null);
-      if (config?.startup_behavior === "show_new_meeting") {
-        navigate({ name: "new-meeting" });
+        // If the engine already has a live session (app window reloaded
+        // without the engine restarting), jump straight back into it rather
+        // than showing the dashboard as if nothing were recording.
+        const wasActive = await hydrate().catch(() => false);
+        if (wasActive) {
+          setLoadingStatus("loading");
+          navigate({ name: "meeting" });
+          setCheckedRecovery(true);
+          return;
+        }
+
+        const list = await engineClient.listUnfinished().catch(() => []);
+        setUnfinished(list);
+
+        const config = await engineClient.getConfig().catch(() => null);
+        if (config?.startup_behavior === "show_new_meeting") {
+          navigate({ name: "new-meeting" });
+        }
+
+        setLoadingStatus("loading");
+        setCheckedRecovery(true);
+      } catch (error) {
+        console.error("Failed to initialize app:", error);
+        setLoadingStatus("error");
+        setCheckedRecovery(true);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Show loading screen until engine is ready and initialization is done
+  if (!checkedRecovery || loadingStatus !== "loading") {
+    return <LoadingScreen status={loadingStatus} onRetry={() => window.location.reload()} />;
+  }
 
   const isFocusMode = view.name === "meeting";
 

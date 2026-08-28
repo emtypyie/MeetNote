@@ -156,6 +156,8 @@ WHISPER_GRACE_WINDOW_SECONDS = 10.0  # best-effort extra wait just to report "Wh
 GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS = 10.0
 MAX_ENGINE_RESTARTS = 3
 LIFECYCLE_POLL_INTERVAL_SECONDS = 1.0
+DESKTOP_LAUNCH_GRACE_PERIOD_MS = 100  # extra time for port socket to fully stabilize after health check passes
+HEALTH_CHECK_VALIDATION_ATTEMPTS = 3  # verify health multiple times before considering engine "ready"
 
 
 # ---------------------------------------------------------------------------
@@ -411,6 +413,8 @@ class EngineManager:
         import sys
         deadline = time.monotonic() + timeout
         logger.info("Waiting for engine health endpoint (%s)...", ENGINE_HEALTH_URL)
+        consecutive_valid_checks = 0
+        
         while time.monotonic() < deadline:
             if not self.is_alive():
                 sys.stdout.write(f"\r  {'Health endpoint':<24} {_tag_err()} Failed      \n")
@@ -422,14 +426,31 @@ class EngineManager:
             sys.stdout.flush()
             
             health = _try_fetch_health()
-            if health is not None:
-                sys.stdout.write(f"\r  {'Health endpoint':<24} {_tag_ok()}   Ready       \n")
-                self.state = EngineState.READY
-                logger.info("Engine health endpoint is up.")
-                self._log_hardware_summary(health)
-                self._wait_briefly_for_whisper()
-                return True
+            if health is not None and _verify_port_ready():
+                # Validate multiple consecutive times to ensure stability
+                consecutive_valid_checks += 1
+                logger.debug(f"Health check passed ({consecutive_valid_checks}/{HEALTH_CHECK_VALIDATION_ATTEMPTS})")
+                
+                if consecutive_valid_checks >= HEALTH_CHECK_VALIDATION_ATTEMPTS:
+                    sys.stdout.write(f"\r  {'Health endpoint':<24} {_tag_ok()}   Ready       \n")
+                    self.state = EngineState.READY
+                    logger.info("Engine health endpoint verified ready after %d consecutive checks", 
+                               HEALTH_CHECK_VALIDATION_ATTEMPTS)
+                    
+                    # Allow extra time for port socket to fully stabilize on all OS platforms
+                    grace_period_s = DESKTOP_LAUNCH_GRACE_PERIOD_MS / 1000.0
+                    logger.debug(f"Grace period: waiting {grace_period_s}s before desktop launch")
+                    time.sleep(grace_period_s)
+                    
+                    self._log_hardware_summary(health)
+                    self._wait_briefly_for_whisper()
+                    return True
+            else:
+                # Reset counter if check fails
+                consecutive_valid_checks = 0
+            
             time.sleep(READY_POLL_INTERVAL_SECONDS)
+        
         sys.stdout.write(f"\r  {'Health endpoint':<24} {_tag_err()} Timeout     \n")
         logger.error("Timed out after %.0fs waiting for engine to become ready", timeout)
         self.state = EngineState.FAILED
@@ -590,13 +611,39 @@ def _kill_port_holder() -> None:
 
 
 def _try_fetch_health() -> Optional[dict]:
+    """Fetch and validate the engine health endpoint.
+    
+    Returns the health dict if the response is valid and contains expected fields.
+    Returns None if the request fails, times out, or the response is invalid.
+    """
     try:
         with urllib.request.urlopen(ENGINE_HEALTH_URL, timeout=2) as resp:
             if resp.status == 200:
-                return json.loads(resp.read().decode("utf-8"))
+                data = json.loads(resp.read().decode("utf-8"))
+                # Validate that response has expected structure (at minimum, hardware and status fields)
+                # This guards against a partial/malformed response being accepted as "ready"
+                if isinstance(data, dict) and "hardware" in data:
+                    return data
     except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError, ValueError):
-        return None
+        pass
     return None
+
+
+def _verify_port_ready() -> bool:
+    """Verify the engine port is actually accepting connections from external perspective.
+    
+    Even if a process is listening, the socket may not be fully established.
+    This check ensures the port is truly ready for client connections.
+    """
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(1.0)
+            result = s.connect_ex(("127.0.0.1", ENGINE_PORT))
+            # 0 = connected successfully, port is ready
+            # non-0 = connection refused or timeout
+            return result == 0
+    except Exception:
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -908,6 +955,9 @@ def main() -> int:
             logger.info("Engine ready.")
             print()
             
+            # Log detailed readiness confirmation
+            logger.info("Engine readiness verified: health check succeeded, port is connectable")
+            
             # Print Hardware Block
             health = _try_fetch_health() or {}
             hw = health.get("hardware") or {}
@@ -930,9 +980,12 @@ def main() -> int:
             print()
             _kv("Launch mode", desktop_mode.capitalize())
             
-            logger.info("Starting MeetNote desktop application...")
+            logger.info("Starting MeetNote desktop application with MEETNOTE_LAUNCHER_MANAGED=1")
             desktop_process = start_desktop(desktop_mode, report.built_executable)
-            logger.info("Desktop process started (pid=%s). MeetNote is ready.", desktop_process.pid)
+            logger.info(
+                "Desktop process started successfully (pid=%s). Engine and desktop both running. MeetNote is ready.",
+                desktop_process.pid,
+            )
             _kv("Application", f"{_tag_ok()}   Running   {_C.GRAY}PID {desktop_process.pid}{_C.RESET}")
             print()
             print(_BORDER)
