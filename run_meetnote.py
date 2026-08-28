@@ -248,6 +248,19 @@ def find_built_desktop_executable() -> Optional[Path]:
             return candidate
     return None
 
+def _check_python_version() -> tuple[bool, str]:
+    try:
+        out = subprocess.check_output(
+            [str(ENGINE_PYTHON), "-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"],
+            text=True, stderr=subprocess.DEVNULL
+        ).strip()
+        parts = out.split('.')
+        major, minor = int(parts[0]), int(parts[1])
+        if major == 3 and minor in (10, 11, 12):
+            return True, out
+        return False, out
+    except Exception:
+        return False, "Unknown"
 
 def validate_environment(require_desktop: bool = True) -> ValidationReport:
     report = ValidationReport(ok=True)
@@ -255,6 +268,12 @@ def validate_environment(require_desktop: bool = True) -> ValidationReport:
     report.add("Project root", PROJECT_ROOT.exists(), str(PROJECT_ROOT))
     report.add("Engine entry point (engine/main.py)", ENGINE_MAIN.exists(), str(ENGINE_MAIN))
     report.add("Engine Python environment (engine/.venv)", ENGINE_PYTHON.exists(), str(ENGINE_PYTHON))
+
+    if ENGINE_PYTHON.exists():
+        py_ok, py_ver = _check_python_version()
+        if not py_ok:
+            report.add("Engine Python version", False, f"Unsupported version {py_ver}. Must be 3.10-3.12. Run setup.py to recreate it.")
+
 
     site_packages = _engine_site_packages()
     if site_packages is None:
@@ -345,6 +364,12 @@ class EngineState(str, Enum):
     FAILED = "failed"
     STOPPING = "stopping"
     STOPPED = "stopped"
+def _get_engine_python_version() -> str:
+    try:
+        out = subprocess.check_output([str(ENGINE_PYTHON), "--version"], text=True, stderr=subprocess.DEVNULL)
+        return out.strip()
+    except Exception:
+        return "Unknown"
 
 
 class EngineManager:
@@ -423,7 +448,37 @@ class EngineManager:
         while time.monotonic() < deadline:
             if not self.is_alive():
                 sys.stdout.write(f"\r  {'Health endpoint':<24} {_tag_err()} Failed      \n")
-                logger.error("Engine process exited before becoming ready (exit code %s)", self.exit_code())
+                code = self.exit_code()
+                logger.error("Engine process exited before becoming ready (exit code %s)", code)
+                
+                if code is not None and code != 0:
+                    py_version = _get_engine_python_version()
+                    err_msg = f"""
+============================================================
+                      MEETNOTE ERROR
+============================================================
+
+  [ERROR] Engine process exited during startup (exit code {code}).
+
+  Python:
+      {py_version}
+
+  Likely cause:
+      Unsupported Python/runtime dependency combination.
+      (Codes like 3221226356 often indicate ABI/Heap Corruption 
+       from running Python 3.13+ with older native extensions).
+
+  Check:
+      logs/engine.log
+      logs/launcher.log
+
+  Run:
+      python setup.py
+      
+------------------------------------------------------------
+"""
+                    print(err_msg)
+                
                 self.state = EngineState.FAILED
                 return False
             

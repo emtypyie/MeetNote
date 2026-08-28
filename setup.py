@@ -117,9 +117,27 @@ def run_quiet(cmd: list[str]) -> bool:
 def check_python_version():
     major = sys.version_info.major
     minor = sys.version_info.minor
-    if major == 3 and minor in (10, 11, 12, 13, 14):
+    if major == 3 and minor in (10, 11, 12):
         return f"{major}.{minor}.{sys.version_info.micro}", True
     return f"{major}.{minor}.{sys.version_info.micro}", False
+
+def discover_python_interpreter() -> str | None:
+    versions_to_try = ["3.12", "3.11", "3.10"]
+    if IS_WINDOWS:
+        for v in versions_to_try:
+            try:
+                cmd = ["py", f"-{v}", "-c", "import sys; print(sys.executable)"]
+                out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL)
+                if out.strip():
+                    return out.strip()
+            except Exception:
+                pass
+    else:
+        for v in versions_to_try:
+            path = shutil.which(f"python{v}")
+            if path:
+                return path
+    return None
 
 def has_nvidia_gpu() -> tuple[bool, str]:
     try:
@@ -138,14 +156,25 @@ def has_nvidia_gpu() -> tuple[bool, str]:
         pass
     return False, ""
 
-def validate_prerequisites() -> bool:
+def validate_prerequisites() -> str:
     print_section("  SYSTEM REQUIREMENTS")
     print()
     
     all_ok = True
     
     py_ver, py_ok = check_python_version()
-    print(f"  {'Python':<22} {ok(py_ver) if py_ok else err(py_ver)}")
+    discovered_python = sys.executable if py_ok else discover_python_interpreter()
+
+    if discovered_python:
+        if py_ok:
+            print(f"  {'Python':<22} {ok(py_ver)}")
+        else:
+            print(f"  {'Python':<22} {C.YELLOW}Unsupported {py_ver}. Using {discovered_python}{C.RESET}")
+        py_ok = True
+    else:
+        print(f"  {'Python':<22} {err(py_ver)}")
+        py_ok = False
+        
     if not py_ok:
         all_ok = False
         
@@ -191,8 +220,9 @@ def validate_prerequisites() -> bool:
         print()
         
         if not py_ok:
-            print(f"  Python 3.10-3.14 is required. You have {py_ver}.")
-            print("  Please install a supported version from https://www.python.org/")
+            print(f"  Python 3.10-3.12 is required. You have {py_ver}.")
+            print("  We could not find a compatible Python installation on your system.")
+            print("  Please install Python 3.12 from https://www.python.org/")
             print()
             
         if not has_node or not has_npm:
@@ -219,7 +249,7 @@ def validate_prerequisites() -> bool:
         print()
         sys.exit(1)
         
-    return True
+    return discovered_python
 
 
 def get_venv_pip() -> Path:
@@ -231,6 +261,22 @@ def get_venv_python() -> Path:
     if IS_WINDOWS:
         return VENV_DIR / "Scripts" / "python.exe"
     return VENV_DIR / "bin" / "python"
+
+def check_venv_python_version() -> tuple[bool, str]:
+    venv_py = get_venv_python()
+    if not venv_py.exists():
+        return False, "Not found"
+    try:
+        cmd = [str(venv_py), "-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}')"]
+        out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL).strip()
+        parts = out.split('.')
+        major = int(parts[0])
+        minor = int(parts[1])
+        if major == 3 and minor in (10, 11, 12):
+            return True, out
+        return False, out
+    except Exception:
+        return False, "Unknown"
 
 def run_pip_cmd(args: list[str], description: str) -> None:
     pip_exe = get_venv_pip()
@@ -331,15 +377,25 @@ def main():
 
     print_header("  MEETNOTE SETUP  ")
     
-    validate_prerequisites()
+    python_exe = validate_prerequisites()
 
     print_section("  PYTHON ENVIRONMENT")
     print()
+    if VENV_DIR.exists():
+        ok_ver, ver_str = check_venv_python_version()
+        if not ok_ver:
+            print(f"  {warn(f'Existing virtual environment has incompatible Python {ver_str}.')}")
+            print(f"  {C.GRAY}Removing incompatible environment...{C.RESET}")
+            shutil.rmtree(VENV_DIR, ignore_errors=True)
+        else:
+            print("  " + ok(f"Virtual environment already exists (Python {ver_str})."))
+
     if not VENV_DIR.exists():
         print("  Creating Python virtual environment in engine/.venv...")
-        venv.create(VENV_DIR, with_pip=True)
-    else:
-        print("  " + ok("Virtual environment already exists."))
+        if python_exe == sys.executable:
+            venv.create(VENV_DIR, with_pip=True)
+        else:
+            subprocess.check_call([python_exe, "-m", "venv", str(VENV_DIR)])
 
     pip_exe = get_venv_pip()
     if not pip_exe.exists():
@@ -387,6 +443,18 @@ def main():
         print("  " + ok("Python dependencies validated."))
     except subprocess.CalledProcessError:
         print("  " + err("pip check failed! Dependency conflicts detected."))
+        sys.exit(1)
+
+    print("\n  " + C.GRAY + "Validating runtime bindings (import faster_whisper, ctranslate2)..." + C.RESET)
+    try:
+        py_venv = get_venv_python()
+        subprocess.check_call(
+            [str(py_venv), "-c", "import faster_whisper; import ctranslate2"], 
+            cwd=str(ENGINE_DIR)
+        )
+        print("  " + ok("Runtime bindings validated successfully."))
+    except subprocess.CalledProcessError:
+        print("  " + err("Runtime binding validation failed! Python version or native extensions may be incompatible."))
         sys.exit(1)
 
     print_section("  DESKTOP SETUP")

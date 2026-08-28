@@ -34,7 +34,7 @@ Meeting audio is processed locally, and transcription is performed entirely on y
 
 ## Requirements
 
-- Python 3.10–3.14
+- Python 3.10–3.12 (Python 3.13+ is currently incompatible due to native dependency issues)
 - Node.js 18+
 - Rust and Tauri platform build tools
 - Supported operating systems: Windows (Linux support is experimental)
@@ -50,10 +50,10 @@ The canonical setup command is:
 python setup.py
 ```
 
-If you have multiple Python versions installed, you can explicitly select an interpreter (e.g., Python 3.14):
+If you have multiple Python versions installed, you can explicitly select an interpreter (e.g., Python 3.12):
 
 ```cmd
-py -3.14 setup.py
+py -3.12 setup.py
 ```
 
 This script prepares the environment, detects available hardware, installs appropriate CPU/GPU dependencies, creates `engine/.env` automatically, and asks for missing AI provider keys.
