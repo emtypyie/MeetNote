@@ -20,12 +20,12 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env   # fill in keys if testing AI notes
-python main.py --port 8765
+python main.py --port 28765
 ```
 
 No `nvidia-cudnn-cu12`/`cuda_env.py` DLL dance is needed on Linux — CUDA
 shared libraries are found normally there. If you have an NVIDIA GPU,
-`curl localhost:8765/health` should report `cuda_usable: true`; if not,
+`curl localhost:28765/health` should report `cuda_usable: true`; if not,
 confirm it correctly falls back to CPU mode rather than erroring.
 
 ## Things to actually verify

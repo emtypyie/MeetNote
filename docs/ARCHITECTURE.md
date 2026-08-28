@@ -7,7 +7,7 @@ run_meetnote.py (root-level launcher — orchestrates, owns no product logic)
         │ spawns, waits for /health, then starts
         ▼
 desktop/ (Tauri + React + Vite + TS)         engine/ (Python, FastAPI + WebSocket)
-  React UI  <── fetch + WebSocket ──────────>  127.0.0.1:8765
+  React UI  <── fetch + WebSocket ──────────>  127.0.0.1:28765
   src-tauri spawns/kills its own engine ONLY when NOT launcher-managed
   (MEETNOTE_LAUNCHER_MANAGED unset — e.g. `npm run tauri dev` run directly)
 ```
@@ -189,7 +189,7 @@ reason).
   are represented in config but not wired into actual behavior yet — the
   Settings UI says so explicitly rather than presenting non-functional
   controls as if they worked.
-- **`run_meetnote.py` refuses to start if port 8765 is already occupied**,
+- **`run_meetnote.py` refuses to start if port 28765 is already occupied**,
   by design (see README "Launcher details" / Troubleshooting) — it cannot
   safely tell "a previous MeetNote engine that didn't shut down" apart from
   "something unrelated," so it asks the user to close whatever's there

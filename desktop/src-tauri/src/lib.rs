@@ -23,7 +23,7 @@ use tauri::Manager;
 /// machine, engine/main.py will fail to bind and log the error to
 /// engine/logs/engine.stderr.log — the frontend's health check will then
 /// show the engine as unavailable rather than hanging silently.
-const ENGINE_PORT: u16 = 8765;
+const ENGINE_PORT: u16 = 28765;
 
 struct EngineHandle(Mutex<Option<Child>>);
 

@@ -42,13 +42,35 @@ Meeting audio is processed locally, and transcription is performed entirely on y
 
 ## Setup
 
+### Windows
+
 The canonical setup command is:
 
-```bash
+```cmd
 python setup.py
 ```
 
 This script prepares the environment, detects available hardware, installs appropriate CPU/GPU dependencies, creates `engine/.env` automatically, and asks for missing AI provider keys.
+
+### Linux (Ubuntu/Debian)
+
+Linux support is currently experimental. Before running the setup script, you must install the OS-level dependencies for audio capture and the Tauri desktop framework:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y python3-venv portaudio19-dev pulseaudio-utils \
+    libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf \
+    build-essential curl wget file libssl-dev libgtk-3-dev \
+    libayatana-appindicator3-dev
+```
+
+Then, run the canonical setup script:
+
+```bash
+python3 setup.py
+```
+
+*(See `docs/LINUX_TESTING.md` for more details on the experimental Linux implementation.)*
 
 ## AI Provider Setup
 

@@ -7,7 +7,7 @@ the AI notes pipeline. The desktop UI is a thin client of this service —
 see desktop/src/services/engineClient.ts.
 
 Run directly for local development:
-    engine/.venv/Scripts/python engine/main.py --port 8765
+    engine/.venv/Scripts/python engine/main.py --port 28765
 """
 
 from __future__ import annotations
@@ -702,7 +702,7 @@ async def ws_meeting(websocket: WebSocket):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--port", type=int, default=28765)
     args = parser.parse_args()
 
     import uvicorn

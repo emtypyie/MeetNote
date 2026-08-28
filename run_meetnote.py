@@ -147,7 +147,7 @@ ENGINE_MAIN = ENGINE_DIR / "main.py"
 
 # Must match ENGINE_PORT in desktop/src-tauri/src/lib.rs — both are fixed
 # rather than negotiated, matching the existing (already-shipped) design.
-ENGINE_PORT = 8765
+ENGINE_PORT = 28765
 ENGINE_HEALTH_URL = f"http://127.0.0.1:{ENGINE_PORT}/health"
 
 READY_POLL_INTERVAL_SECONDS = 1.0
@@ -362,20 +362,25 @@ class EngineManager:
 
     def start(self) -> None:
         if _port_already_in_use():
-            logger.warning(
-                "Port %s is already in use — attempting to stop the previous engine process.",
-                ENGINE_PORT,
-            )
-            _kill_port_holder()
-            # Give the OS a moment to release the socket.
-            time.sleep(1.5)
-            if _port_already_in_use():
-                raise EngineStartError(
-                    f"Port {ENGINE_PORT} is still in use after attempting to stop the previous "
-                    "process. It may be held by an unrelated application. "
-                    "Close whatever is using that port and try again."
-                )
-            logger.info("Port %s is now free — continuing startup.", ENGINE_PORT)
+            pid, process_name = _get_port_holder_info()
+            
+            error_msg = f"""
+============================================================
+                      MEETNOTE ERROR
+============================================================
+
+  [ERROR] Port {ENGINE_PORT} is already in use.
+
+  Another application is using the MeetNote engine port.
+  (PID: {pid if pid is not None else 'Unknown'}, Process: {process_name})
+
+  Close the application using port {ENGINE_PORT} and try again.
+
+  The process was not terminated automatically.
+
+------------------------------------------------------------
+"""
+            raise EngineStartError(error_msg)
 
         LOG_DIR.mkdir(parents=True, exist_ok=True)
         log_path = LOG_DIR / "engine.log"
@@ -553,15 +558,10 @@ def _port_already_in_use() -> bool:
         return s.connect_ex(("127.0.0.1", ENGINE_PORT)) == 0
 
 
-def _kill_port_holder() -> None:
-    """Best-effort: find and kill the process listening on ENGINE_PORT.
-
-    Uses platform-appropriate tools to locate the PID, then sends a
-    forceful termination signal. Errors are logged but never raised —
-    the caller checks the port again after this returns and decides
-    whether to proceed or abort.
-    """
+def _get_port_holder_info() -> tuple[Optional[int], str]:
+    """Find the PID and process name listening on ENGINE_PORT without killing it."""
     pid: Optional[int] = None
+    process_name = "Unknown"
 
     try:
         if IS_WINDOWS:
@@ -580,6 +580,20 @@ def _kill_port_holder() -> None:
                     except ValueError:
                         pass
                     break
+            
+            if pid is not None:
+                try:
+                    out = subprocess.check_output(
+                        ["tasklist", "/FI", f"PID eq {pid}", "/NH", "/FO", "CSV"],
+                        text=True,
+                        stderr=subprocess.DEVNULL,
+                    )
+                    # Output is like: "python.exe","1234","Console","1","25,124 K"
+                    if out.strip() and not out.strip().startswith("INFO:"):
+                        process_name = out.split(",")[0].strip('"')
+                except Exception:
+                    pass
+
         else:
             # lsof is available on macOS and most Linux distros.
             out = subprocess.check_output(
@@ -589,25 +603,23 @@ def _kill_port_holder() -> None:
             )
             first_line = out.strip().splitlines()[0] if out.strip() else ""
             pid = int(first_line) if first_line.isdigit() else None
+            
+            if pid is not None:
+                try:
+                    out = subprocess.check_output(
+                        ["ps", "-p", str(pid), "-o", "comm="],
+                        text=True,
+                        stderr=subprocess.DEVNULL,
+                    )
+                    if out.strip():
+                        process_name = out.strip()
+                except Exception:
+                    pass
+
     except Exception as exc:  # noqa: BLE001
         logger.warning("Could not determine PID for port %s: %s", ENGINE_PORT, exc)
 
-    if pid is None:
-        logger.warning("No PID found for port %s — cannot auto-kill.", ENGINE_PORT)
-        return
-
-    logger.info("Killing process PID %s that is holding port %s.", pid, ENGINE_PORT)
-    try:
-        if IS_WINDOWS:
-            subprocess.call(
-                ["taskkill", "/F", "/PID", str(pid)],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-        else:
-            os.kill(pid, signal.SIGKILL)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Failed to kill PID %s: %s", pid, exc)
+    return pid, process_name
 
 
 def _try_fetch_health() -> Optional[dict]:
