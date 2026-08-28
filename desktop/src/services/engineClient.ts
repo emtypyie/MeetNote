@@ -44,29 +44,75 @@ class EngineUnavailableError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const base = await engineBaseUrl();
-  let res: Response;
-  try {
-    res = await fetch(`${base}${path}`, {
-      ...init,
-      headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
-    });
-  } catch (err) {
-    throw new EngineUnavailableError(err);
+function isConnectionError(err: unknown): boolean {
+  // Detect connection-related errors that warrant retrying
+  if (err instanceof TypeError) {
+    const msg = err.message.toLowerCase();
+    return (
+      msg.includes("failed to fetch") ||
+      msg.includes("network") ||
+      msg.includes("connection") ||
+      msg.includes("refused")
+    );
   }
-  if (!res.ok) {
-    let detail = res.statusText;
+  return false;
+}
+
+async function requestWithRetry<T>(
+  path: string,
+  init?: RequestInit,
+  retryOptions?: { maxAttempts?: number; initialDelayMs?: number; maxDelayMs?: number },
+): Promise<T> {
+  const maxAttempts = retryOptions?.maxAttempts ?? 5;
+  const initialDelayMs = retryOptions?.initialDelayMs ?? 500;
+  const maxDelayMs = retryOptions?.maxDelayMs ?? 2000;
+
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      const body = await res.json();
-      detail = body.detail ?? detail;
-    } catch {
-      // response body wasn't JSON; keep statusText
+      const base = await engineBaseUrl();
+      const res = await fetch(`${base}${path}`, {
+        ...init,
+        headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+      });
+
+      if (!res.ok) {
+        let detail = res.statusText;
+        try {
+          const body = await res.json();
+          detail = body.detail ?? detail;
+        } catch {
+          // response body wasn't JSON; keep statusText
+        }
+        throw new Error(detail);
+      }
+
+      if (res.status === 204) return undefined as T;
+      return (await res.json()) as T;
+    } catch (err) {
+      lastError = err;
+
+      // Only retry on connection errors, not on HTTP errors or JSON parsing errors
+      if (!isConnectionError(err)) {
+        throw err;
+      }
+
+      if (attempt < maxAttempts) {
+        // Exponential backoff: delay increases with each retry
+        const delayMs = Math.min(initialDelayMs * Math.pow(2, attempt - 1), maxDelayMs);
+        console.debug(`Engine connection failed (attempt ${attempt}/${maxAttempts}), retrying in ${delayMs}ms...`);
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
     }
-    throw new Error(detail);
   }
-  if (res.status === 204) return undefined as T;
-  return (await res.json()) as T;
+
+  // All retries exhausted
+  throw new EngineUnavailableError(lastError);
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  return requestWithRetry(path, init);
 }
 
 export const engineClient = {
