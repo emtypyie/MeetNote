@@ -107,22 +107,29 @@ class EngineState:
 engine_state = EngineState()
 
 
-def _load_whisper_in_background():
-    from transcription.whisper_engine import WhisperTranscriber
+whisper_load_lock = threading.Lock()
 
-    try:
-        transcriber = WhisperTranscriber(
-            engine_state.mode_decision.model_size,
-            engine_state.mode_decision.device,
-            engine_state.mode_decision.compute_type,
-        )
-        transcriber.load()
-        engine_state.transcriber = transcriber
-    except Exception as exc:  # even CPU load failed — transcription is unavailable
-        logger.exception("Fatal: could not load Whisper model on GPU or CPU")
-        engine_state.whisper_load_error = str(exc)
-    finally:
-        engine_state.whisper_loading = False
+def _load_whisper_in_background():
+    with whisper_load_lock:
+        if engine_state.transcriber is not None or engine_state.mode_decision.device == "error":
+            engine_state.whisper_loading = False
+            return
+            
+        from transcription.whisper_engine import WhisperTranscriber
+
+        try:
+            transcriber = WhisperTranscriber(
+                engine_state.mode_decision.model_size,
+                engine_state.mode_decision.device,
+                engine_state.mode_decision.compute_type,
+            )
+            transcriber.load()
+            engine_state.transcriber = transcriber
+        except Exception as exc:  # even CPU load failed — transcription is unavailable
+            logger.exception("Fatal: could not load Whisper model on GPU or CPU")
+            engine_state.whisper_load_error = str(exc)
+        finally:
+            engine_state.whisper_loading = False
 
 
 
@@ -495,14 +502,19 @@ def start_meeting(body: StartMeetingBody):
         if engine_state.active_session is not None:
             raise HTTPException(409, "A meeting is already in progress")
             
-        # Load the model synchronously if it hasn't been loaded yet
-        if engine_state.transcriber is None and engine_state.mode_decision.device != "error":
-            # Avoid UI deadlock indication by ensuring loading is False after
-            _load_whisper_in_background()
+        # Ensure whisper is loaded. If another thread is already loading it,
+        # _load_whisper_in_background will wait on the lock.
+        _load_whisper_in_background()
 
         if engine_state.transcriber is None or not engine_state.transcriber.is_loaded:
             detail = engine_state.whisper_load_error or "Whisper model failed to load."
             raise HTTPException(503, detail)
+
+        # Check audio devices explicitly so we can return a clear error if both are broken.
+        from audio.health import probe_devices
+        devices = probe_devices()
+        if not devices.microphone_ok and not devices.system_audio_ok:
+            raise HTTPException(503, "Meeting start rejected: No audio devices available (neither microphone nor system audio).")
 
         try:
             audio_capture = AudioCaptureFactory.create()

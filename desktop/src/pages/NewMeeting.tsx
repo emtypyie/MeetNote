@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ArrowRight, Cpu, RefreshCw } from "lucide-react";
-import { Button, Card, HealthRow, SectionLabel } from "../components/ui";
+import { Button, Card, HealthRow, SectionLabel, Select } from "../components/ui";
 import { ProviderStatusRow } from "../components/ProviderStatusRow";
 import { engineClient } from "../services/engineClient";
 import { useMeetingStore } from "../stores/meetingStore";
@@ -21,6 +21,12 @@ function getAiStatusMessage(ai: AIProviderStatus | null | undefined): React.Reac
   const qOk = ai.groq.status === "configured";
   const gNotConf = ai.gemini.status === "not_configured";
   const qNotConf = ai.groq.status === "not_configured";
+  const gChecking = ai.gemini.status === "checking";
+  const qChecking = ai.groq.status === "checking";
+
+  if (gChecking || qChecking) {
+    return "Checking AI provider status...";
+  }
 
   if (gNotConf && qNotConf) {
     return (
@@ -75,7 +81,10 @@ function getRoutingMessage(ai: AIProviderStatus | null | undefined): string {
   const qOk = ai.groq.status === "configured";
   const gNotConf = ai.gemini.status === "not_configured";
   const qNotConf = ai.groq.status === "not_configured";
+  const gChecking = ai.gemini.status === "checking";
+  const qChecking = ai.groq.status === "checking";
 
+  if (gChecking || qChecking) return "Checking...";
   if (gNotConf && qNotConf) return "Unavailable";
   if (!gOk && !qOk) return "Unavailable";
   if (gOk && qOk) return "Gemini → Groq fallback";
@@ -107,10 +116,9 @@ export function NewMeeting() {
         const h = await engineClient.health();
         if (cancelled) return;
         setHealth(h);
-        if (h.whisper.loading) {
-          timer = setTimeout(poll, 1500);
-        }
       } catch {
+        // Ignore fetch errors to keep polling alive
+      } finally {
         if (!cancelled) timer = setTimeout(poll, 2000);
       }
     }
@@ -128,9 +136,26 @@ export function NewMeeting() {
     };
   }, []);
 
-  const whisperReady = !!health?.whisper.loaded;
+  let btnText = "Start Meeting";
+  let audioMissing = false;
+  if (health) {
+    audioMissing = !health.audio_devices.microphone_ok && !health.audio_devices.system_audio_ok;
+  }
+  
+  if (!health) btnText = "Checking...";
+  else if (starting) btnText = "Starting...";
+  else if (audioMissing) btnText = "Audio unavailable";
+  else if (health.whisper.error) btnText = "Transcription Error";
+  else if (health.whisper.loading) btnText = "Preparing transcription...";
+
   const restartRequired = !!health?.whisper?.restart_required;
-  const canStart = whisperReady && title.trim().length > 0 && !starting && !restartRequired;
+
+  const canStart = title.trim().length > 0 && 
+                   !starting && 
+                   !restartRequired && 
+                   !health?.whisper.error && 
+                   health !== null &&
+                   !audioMissing;
 
   async function handleStart() {
     setStarting(true);
@@ -162,17 +187,13 @@ export function NewMeeting() {
         />
 
         <label className="mt-4 block text-xs font-medium text-[var(--color-text-muted)]">Note template</label>
-        <select
-          value={templateId}
-          onChange={(e) => setTemplateId(e.target.value)}
-          className="mt-1.5 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
-        >
-          {templates.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.name}
-            </option>
-          ))}
-        </select>
+        <div className="mt-1.5">
+          <Select
+            value={templateId}
+            onChange={(val) => setTemplateId(val)}
+            options={templates.map((t) => ({ value: t.id, label: t.name }))}
+          />
+        </div>
       </Card>
 
       <Card className="mt-4 p-5">
@@ -190,7 +211,7 @@ export function NewMeeting() {
         />
         <HealthRow
           label="Whisper"
-          ok={whisperReady}
+          ok={!!health?.whisper.loaded}
           pending={health?.whisper.loading}
           detail={
             health?.whisper.loading
@@ -198,6 +219,8 @@ export function NewMeeting() {
               : health?.whisper.error
                 ? health.whisper.error
                 : health?.transcription_mode?.model_size
+                  ? `${health.transcription_mode.model_size}`
+                  : undefined
           }
         />
         <HealthRow
@@ -249,7 +272,7 @@ export function NewMeeting() {
       ) : (
         <div className="mt-6 flex justify-end">
           <Button variant="primary" disabled={!canStart} onClick={handleStart}>
-            {starting ? "Starting…" : "Start Meeting"}
+            {btnText}
             <ArrowRight size={16} />
           </Button>
         </div>

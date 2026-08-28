@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { FolderOpen } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { openPath } from "@tauri-apps/plugin-opener";
-import { Button, Card, HealthRow, SectionLabel } from "../components/ui";
+import { Button, Card, HealthRow, SectionLabel, Select } from "../components/ui";
 import { ProviderStatusRow } from "../components/ProviderStatusRow";
 import { engineClient } from "../services/engineClient";
 import type { AppConfig, HealthResponse, NoteTemplate } from "../types/engine";
@@ -54,9 +54,9 @@ export function Settings() {
     }
   }
 
-  function handleHardwareChange(e: React.ChangeEvent<HTMLSelectElement>) {
+  function handleHardwareChange(value: string) {
     if (health?.active_meeting_id) return;
-    setPendingHardwareMode(e.target.value);
+    setPendingHardwareMode(value);
     setShowRestartDialog(true);
   }
 
@@ -103,28 +103,22 @@ export function Settings() {
         <SectionLabel>General</SectionLabel>
 
         <Field label="Startup behavior">
-          <select
+          <Select
             value={config.startup_behavior}
-            onChange={(e) => save({ startup_behavior: e.target.value })}
-            className={selectClass}
-          >
-            <option value="show_dashboard">Show dashboard</option>
-            <option value="show_new_meeting">Go straight to New Meeting</option>
-          </select>
+            onChange={(val) => save({ startup_behavior: val })}
+            options={[
+              { value: "show_dashboard", label: "Show dashboard" },
+              { value: "show_new_meeting", label: "Go straight to New Meeting" }
+            ]}
+          />
         </Field>
 
         <Field label="Default meeting template">
-          <select
+          <Select
             value={config.default_template_id}
-            onChange={(e) => save({ default_template_id: e.target.value })}
-            className={selectClass}
-          >
-            {templates.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
-            ))}
-          </select>
+            onChange={(val) => save({ default_template_id: val })}
+            options={templates.map((t) => ({ value: t.id, label: t.name }))}
+          />
         </Field>
 
         <Field label="Transcript storage location">
@@ -197,16 +191,16 @@ export function Settings() {
         <SectionLabel>Transcription</SectionLabel>
 
         <Field label="Transcription hardware">
-          <select
+          <Select
             value={pendingHardwareMode || config.transcription?.hardware_mode || "automatic"}
             onChange={handleHardwareChange}
             disabled={!!health?.active_meeting_id}
-            className={selectClass}
-          >
-            <option value="automatic">Automatic</option>
-            <option value="gpu">NVIDIA GPU</option>
-            <option value="cpu">CPU only</option>
-          </select>
+            options={[
+              { value: "automatic", label: "Automatic" },
+              { value: "gpu", label: "NVIDIA GPU" },
+              { value: "cpu", label: "CPU only" }
+            ]}
+          />
           {!!health?.active_meeting_id && (
             <p className="mt-2 text-xs text-[var(--color-warning)]">
               Locked while a meeting is recording.
@@ -301,13 +295,13 @@ export function Settings() {
       <Card className="mt-4 p-5">
         <SectionLabel>Language & Translation</SectionLabel>
         <Field label="Transcript output language">
-          <select
+          <Select
             value={config.transcription?.output_language || "en"}
-            onChange={(e) => save({ transcription: { ...config.transcription, output_language: e.target.value } })}
-            className={selectClass}
-          >
-            <option value="en">English</option>
-          </select>
+            onChange={(val) => save({ transcription: { ...config.transcription, output_language: val } })}
+            options={[
+              { value: "en", label: "English" }
+            ]}
+          />
           <p className="mt-2 text-xs text-[var(--color-text-faint)]">
             MeetNote will automatically detect the spoken language. If it is not English, it will be translated to English.
           </p>
