@@ -1,15 +1,5 @@
 #!/usr/bin/env python3
-"""MeetNote Hardware-Aware Installer/Setup Script.
-
-This script provisions the Python virtual environment and installs the
-correct dependencies based on the hardware detected. It specifically avoids
-installing large CUDA/NVIDIA runtime libraries on CPU-only machines.
-
-Usage:
-    python setup.py                # automatic hardware detection
-    python setup.py --cpu-only     # force CPU-only installation
-    python setup.py --gpu          # force GPU installation
-"""
+"""MeetNote Complete Bootstrapper & Setup Script."""
 
 import argparse
 import getpass
@@ -17,6 +7,7 @@ import platform
 import subprocess
 import sys
 import venv
+import shutil
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -29,20 +20,17 @@ IS_LINUX = platform.system() == "Linux"
 
 
 # ---------------------------------------------------------------------------
-# Colour / ANSI support — safe on Windows 10+, disabled gracefully if the
-# terminal does not support escape codes.
+# Colour / ANSI support
 # ---------------------------------------------------------------------------
 
 def _enable_windows_ansi() -> bool:
-    """Enable Virtual Terminal Processing on Windows so ANSI escape codes work."""
     if not IS_WINDOWS:
         return True
     try:
         import ctypes
-        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
-        # Enable ENABLE_VIRTUAL_TERMINAL_PROCESSING (0x0004) on stdout handle
+        kernel32 = ctypes.windll.kernel32
         ENABLE_VTP = 0x0004
-        handle = kernel32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
+        handle = kernel32.GetStdHandle(-11)
         mode = ctypes.c_ulong()
         if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
             kernel32.SetConsoleMode(handle, mode.value | ENABLE_VTP)
@@ -50,18 +38,13 @@ def _enable_windows_ansi() -> bool:
     except Exception:
         return False
 
-
 _ANSI_OK = _enable_windows_ansi()
 
-
 class C:
-    """ANSI colour constants. Falls back to empty strings when unsupported."""
     if _ANSI_OK and sys.stdout.isatty():
         RESET  = "\033[0m"
         BOLD   = "\033[1m"
         DIM    = "\033[2m"
-
-        # Foreground colours
         WHITE  = "\033[97m"
         CYAN   = "\033[96m"
         GREEN  = "\033[92m"
@@ -72,11 +55,6 @@ class C:
         PURPLE = "\033[95m"
     else:
         RESET = BOLD = DIM = WHITE = CYAN = GREEN = YELLOW = RED = BLUE = GRAY = PURPLE = ""
-
-
-# ---------------------------------------------------------------------------
-# CLI layout helpers
-# ---------------------------------------------------------------------------
 
 WIDTH = 62
 BORDER  = C.CYAN  + C.BOLD + "=" * WIDTH + C.RESET
@@ -90,152 +68,183 @@ def print_header(title: str) -> None:
     print(C.CYAN + C.BOLD + centred + C.RESET)
     print(BORDER)
 
-
 def print_section(title: str) -> None:
     print()
     print(C.BOLD + C.WHITE + title + C.RESET)
     print(DIVIDER)
 
-
 def print_divider() -> None:
     print(DIVIDER)
-
 
 def ok(msg: str) -> str:
     return C.GREEN + C.BOLD + "[OK]" + C.RESET + " " + msg
 
-
 def warn(msg: str) -> str:
-    return C.YELLOW + C.BOLD + "[!] " + C.RESET + " " + msg
-
+    return C.YELLOW + C.BOLD + "[WARN]" + C.RESET + " " + msg
 
 def err(msg: str) -> str:
     return C.RED + C.BOLD + "[ERROR]" + C.RESET + " " + msg
 
-
 def skip(msg: str) -> str:
     return C.GRAY + "[--]" + C.RESET + " " + msg
+    
+def missing(msg: str) -> str:
+    return C.RED + C.BOLD + "[MISSING]" + C.RESET + " " + msg
 
-
-# ---------------------------------------------------------------------------
-# API key masking — actual key values never appear in output
-# ---------------------------------------------------------------------------
+def wait(msg: str) -> str:
+    return C.YELLOW + C.BOLD + "[WAIT]" + C.RESET + " " + msg
 
 def mask_api_key(key: str) -> str:
-    """Return a masked representation. The actual key is never returned."""
-    if not key:
-        return ""
+    if not key: return ""
     for prefix in ("gsk_", "AIza", "sk-"):
         if key.startswith(prefix):
             hidden_len = len(key) - len(prefix)
-            return (C.DIM + prefix + C.RESET +
-                    C.YELLOW + "*" * hidden_len + C.RESET)
+            return C.DIM + prefix + C.RESET + C.YELLOW + "*" * hidden_len + C.RESET
     return C.YELLOW + "*" * len(key) + C.RESET
 
 
 # ---------------------------------------------------------------------------
-# Provider display helpers
+# Prerequisites
 # ---------------------------------------------------------------------------
 
-def print_provider_row(label: str, configured: bool, masked: str = "") -> None:
-    marker = ok("") if configured else skip("")
-    status = (C.GREEN + "Configured" + C.RESET) if configured else (C.GRAY + "Not configured" + C.RESET)
-    detail = "  " + masked if configured and masked else ""
-    print(f"  {marker}{C.BOLD}{label:<10}{C.RESET} {status}{detail}")
+def run_quiet(cmd: list[str]) -> bool:
+    try:
+        subprocess.check_call(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
 
+def check_python_version():
+    major = sys.version_info.major
+    minor = sys.version_info.minor
+    if major == 3 and minor in (10, 11, 12, 13, 14):
+        return f"{major}.{minor}.{sys.version_info.micro}", True
+    return f"{major}.{minor}.{sys.version_info.micro}", False
 
-def print_routing_summary(is_gemini: bool, is_groq: bool) -> None:
-    print()
-    print("  " + C.BOLD + C.WHITE + "AI ROUTING" + C.RESET)
-    if is_gemini and is_groq:
-        print("  " + C.CYAN + "Gemini" + C.RESET + C.GRAY + " -> " + C.RESET +
-              C.BLUE + "Groq fallback" + C.RESET)
-    elif is_gemini:
-        print("  " + C.CYAN + "Gemini only" + C.RESET +
-              C.GRAY + " - no fallback configured" + C.RESET)
-    elif is_groq:
-        print("  " + C.BLUE + "Groq only" + C.RESET +
-              C.GRAY + " - no fallback configured" + C.RESET)
-    else:
-        print("  " + C.YELLOW + "No AI provider configured" + C.RESET)
-
-
-def print_setup_complete(is_gemini: bool, is_groq: bool) -> None:
-    print()
-    print_divider()
-    print()
-    print("  " + C.BOLD + C.WHITE + "SETUP COMPLETE" + C.RESET)
-    print()
-
-    if is_gemini or is_groq:
-        print("  " + ok("Environment configured successfully."))
-        print()
-        print("  " + C.BOLD + "AI provider:" + C.RESET)
-        if is_gemini and is_groq:
-            print("  " + C.CYAN + "Gemini" + C.RESET + " -> " + C.BLUE + "Groq fallback" + C.RESET)
-        elif is_gemini:
-            print("  " + C.CYAN + "Gemini" + C.RESET)
-        else:
-            print("  " + C.BLUE + "Groq" + C.RESET)
-    else:
-        print("  " + warn("No AI provider configured."))
-        print()
-        print("  Local recording and transcription will still work.")
-        print("  AI meeting notes require at least one API key.")
-        print()
-        print("  You can configure a provider later in:")
-        print("  " + C.YELLOW + "  engine/.env" + C.RESET)
-
-    print()
-    print("  " + C.BOLD + "Start MeetNote:" + C.RESET)
-    print("  " + C.GREEN + "  python run_meetnote.py" + C.RESET)
-    print()
-    print_divider()
-    print()
-
-
-# ---------------------------------------------------------------------------
-# Core logic (unchanged)
-# ---------------------------------------------------------------------------
-
-def has_nvidia_gpu() -> bool:
-    """Lightweight OS-level check for NVIDIA GPU presence.
-    Must not import any CUDA/CTranslate2 dependencies.
-    """
+def has_nvidia_gpu() -> tuple[bool, str]:
     try:
         if IS_WINDOWS:
-            cmd = ["powershell", "-Command",
-                   "Get-CimInstance -ClassName Win32_VideoController | Select-Object -ExpandProperty Name"]
+            cmd = ["powershell", "-Command", "Get-CimInstance -ClassName Win32_VideoController | Select-Object -ExpandProperty Name"]
             out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL)
-            return "NVIDIA" in out.upper()
+            for line in out.splitlines():
+                if "NVIDIA" in line.upper():
+                    return True, line.strip()
         elif IS_LINUX:
             out = subprocess.check_output(["lspci"], text=True, stderr=subprocess.DEVNULL)
-            return "NVIDIA" in out.upper()
+            for line in out.splitlines():
+                if "NVIDIA" in line.upper() and ("VGA" in line or "3D" in line):
+                    return True, line.split(":")[-1].strip()
     except Exception:
         pass
-    return False
+    return False, ""
+
+def validate_prerequisites() -> bool:
+    print_section("  SYSTEM REQUIREMENTS")
+    print()
+    
+    all_ok = True
+    
+    py_ver, py_ok = check_python_version()
+    print(f"  {'Python':<22} {ok(py_ver) if py_ok else err(py_ver)}")
+    if not py_ok:
+        all_ok = False
+        
+    has_node = shutil.which("node") is not None
+    print(f"  {'Node.js':<22} {ok('') if has_node else missing('')}")
+    
+    has_npm = shutil.which("npm") is not None
+    print(f"  {'npm':<22} {ok('') if has_npm else missing('')}")
+    
+    if not has_node or not has_npm:
+        all_ok = False
+        
+    has_git = shutil.which("git") is not None
+    print(f"  {'Git':<22} {ok('') if has_git else skip('Not installed (Optional)')}")
+    
+    has_rust = shutil.which("rustc") is not None
+    print(f"  {'Rust':<22} {ok('') if has_rust else missing('')}")
+    
+    has_cargo = shutil.which("cargo") is not None
+    print(f"  {'Cargo':<22} {ok('') if has_cargo else missing('')}")
+    
+    if not has_rust or not has_cargo:
+        all_ok = False
+        
+    tauri_ok = True
+    if IS_LINUX:
+        has_pkg_config = shutil.which("pkg-config") is not None
+        if not has_pkg_config:
+            tauri_ok = False
+        else:
+            # Check for tauri dependencies
+            tauri_ok = run_quiet(["pkg-config", "--exists", "webkit2gtk-4.1", "gtk+-3.0", "ayatana-appindicator3-0.1"])
+        print(f"  {'Tauri prerequisites':<22} {ok('') if tauri_ok else missing('Missing dev packages')}")
+        if not tauri_ok:
+            all_ok = False
+
+    print()
+    print_divider()
+    
+    if not all_ok:
+        print()
+        print("  " + C.RED + C.BOLD + "Missing Prerequisites Detected" + C.RESET)
+        print()
+        
+        if not py_ok:
+            print(f"  Python 3.10-3.14 is required. You have {py_ver}.")
+            print("  Please install a supported version from https://www.python.org/")
+            print()
+            
+        if not has_node or not has_npm:
+            print("  Node.js and npm are required to build the frontend.")
+            print("  Please install Node.js (v22+ recommended) from https://nodejs.org/")
+            print()
+            
+        if not has_rust or not has_cargo:
+            print("  Rust and Cargo are required to build the desktop application.")
+            if IS_LINUX:
+                print("  Install Rust by running:")
+                print("    " + C.CYAN + "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh" + C.RESET)
+            else:
+                print("  Install Rust from https://rustup.rs/")
+            print()
+            
+        if IS_LINUX and not tauri_ok:
+            print("  Linux requires development packages to build Tauri apps.")
+            print("  Please install them by running:")
+            print("    " + C.CYAN + "sudo apt update && sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file libssl-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev" + C.RESET)
+            print()
+            
+        print("  " + C.GRAY + "Setup stopped. Please install the missing prerequisites and run setup.py again." + C.RESET)
+        print()
+        sys.exit(1)
+        
+    return True
 
 
 def get_venv_pip() -> Path:
     if IS_WINDOWS:
         return VENV_DIR / "Scripts" / "pip.exe"
     return VENV_DIR / "bin" / "pip"
+    
+def get_venv_python() -> Path:
+    if IS_WINDOWS:
+        return VENV_DIR / "Scripts" / "python.exe"
+    return VENV_DIR / "bin" / "python"
 
-
-def run_pip_install(req_file: Path) -> None:
+def run_pip_cmd(args: list[str], description: str) -> None:
     pip_exe = get_venv_pip()
-    print(f"\n  Installing from {C.BOLD}{req_file.name}{C.RESET}...")
-    cmd = [str(pip_exe), "install", "-r", str(req_file)]
+    print(f"  {C.GRAY}Running: pip {' '.join(args)}...{C.RESET}")
+    cmd = [str(pip_exe)] + args
     try:
         subprocess.check_call(cmd, cwd=str(ENGINE_DIR))
     except subprocess.CalledProcessError:
-        print(f"\n  {err(f'Failed to install {req_file.name}')}")
+        print(f"\n  {err(f'Failed during: {description}')}")
         sys.exit(1)
 
 
-def configure_ai_providers() -> None:
+def configure_ai_providers() -> tuple[str, str]:
     env_file = ENGINE_DIR / ".env"
-
     existing_lines: list[str] = []
     groq_key = ""
     gemini_key = ""
@@ -249,30 +258,16 @@ def configure_ai_providers() -> None:
             elif ls.startswith("GEMINI_API_KEY="):
                 gemini_key = ls.split("=", 1)[1].strip(" '\"")
 
-    # ------------------------------------------------------------------
-    # Header
-    # ------------------------------------------------------------------
-    print_header("  MEETNOTE SETUP  ")
-
     print_section("  AI PROVIDER CONFIGURATION")
     print()
-    print("  Configure " + C.CYAN + "Gemini" + C.RESET + ", " +
-          C.BLUE + "Groq" + C.RESET + ", or both.")
-    print("  If both are configured, " + C.CYAN + "Gemini" + C.RESET +
-          " is primary and")
-    print("  " + C.BLUE + "Groq" + C.RESET + " is used automatically as a fallback.")
+    print("  Configure " + C.CYAN + "Gemini" + C.RESET + ", " + C.BLUE + "Groq" + C.RESET + ", or both.")
+    print("  If both are configured, " + C.CYAN + "Gemini" + C.RESET + " is primary.")
     print("  " + C.GRAY + "Press Enter to skip a provider." + C.RESET)
-
-    # ------------------------------------------------------------------
-    # API key prompts
-    # ------------------------------------------------------------------
-    print_section("  API KEYS")
     print()
 
     new_groq = groq_key
     if groq_key:
-        print("  " + C.GRAY + f"Groq API key [already configured]: " + C.RESET +
-              mask_api_key(groq_key))
+        print("  " + C.GRAY + f"Groq API key [already configured]: " + C.RESET + mask_api_key(groq_key))
     else:
         raw = getpass.getpass("  Groq API key [optional]: ").strip()
         new_groq = raw
@@ -281,17 +276,13 @@ def configure_ai_providers() -> None:
 
     new_gemini = gemini_key
     if gemini_key:
-        print("  " + C.GRAY + f"Gemini API key [already configured]: " + C.RESET +
-              mask_api_key(gemini_key))
+        print("  " + C.GRAY + f"Gemini API key [already configured]: " + C.RESET + mask_api_key(gemini_key))
     else:
         raw = getpass.getpass("  Gemini API key [optional]: ").strip()
         new_gemini = raw
         if raw:
             print("  " + C.GRAY + "Gemini API key: " + C.RESET + mask_api_key(raw))
 
-    # ------------------------------------------------------------------
-    # Write engine/.env (logic unchanged)
-    # ------------------------------------------------------------------
     groq_updated = False
     gemini_updated = False
     new_lines: list[str] = []
@@ -318,53 +309,30 @@ def configure_ai_providers() -> None:
         if not IS_WINDOWS:
             env_file.chmod(0o600)
     except Exception as e:
-        print()
-        print_divider()
-        print("  " + err("Setup failed"))
-        print()
-        print("  Could not write " + C.YELLOW + "engine/.env" + C.RESET + ".")
-        print()
-        print("  Reason:")
-        print("  " + C.RED + f"{type(e).__name__}" + C.RESET)
-        print()
-        print("  Please check file permissions and try again.")
-        print_divider()
-        return
+        print("\n  " + err(f"Could not write engine/.env: {e}"))
+        sys.exit(1)
+        
+    return new_gemini, new_groq
 
-    # ------------------------------------------------------------------
-    # Configuration summary
-    # ------------------------------------------------------------------
-    is_groq_configured = bool(new_groq)
-    is_gemini_configured = bool(new_gemini)
-
-    print_section("  CONFIGURATION SUMMARY")
-    print()
-    print_provider_row("Groq",   is_groq_configured,   mask_api_key(new_groq)   if is_groq_configured   else "")
-    print_provider_row("Gemini", is_gemini_configured, mask_api_key(new_gemini) if is_gemini_configured else "")
-    print_routing_summary(is_gemini_configured, is_groq_configured)
-
-    if not is_groq_configured and not is_gemini_configured:
-        print()
-        print("  " + C.YELLOW + "No AI provider has been configured." + C.RESET)
-        print("  MeetNote can still record and transcribe locally,")
-        print("  but AI-generated meeting notes will not be available.")
-        print()
-        print("  Add a key later in: " + C.YELLOW + "engine/.env" + C.RESET)
-        print("  At least one provider is recommended for AI notes.")
-
+def check_built_binary() -> bool:
+    target_dir = DESKTOP_DIR / "src-tauri" / "target"
+    binary_name = "desktop.exe" if IS_WINDOWS else "desktop"
+    for profile in ("release", "debug"):
+        candidate = target_dir / profile / binary_name
+        if candidate.exists():
+            return True
+    return False
 
 def main():
     parser = argparse.ArgumentParser(description="MeetNote setup and dependency installation.")
-    mode_group = parser.add_mutually_exclusive_group()
-    mode_group.add_argument("--cpu-only", action="store_true",
-                            help="Force CPU-only installation (skip GPU dependencies).")
-    mode_group.add_argument("--gpu", action="store_true",
-                            help="Force GPU installation (install CUDA/NVIDIA dependencies).")
+    parser.add_argument("--cpu-only", action="store_true", help="Force CPU-only installation.")
+    parser.add_argument("--gpu", action="store_true", help="Force GPU installation.")
     args = parser.parse_args()
 
-    print_header("  MEETNOTE ENVIRONMENT SETUP  ")
+    print_header("  MEETNOTE SETUP  ")
+    
+    validate_prerequisites()
 
-    # 1. Ensure venv exists
     print_section("  PYTHON ENVIRONMENT")
     print()
     if not VENV_DIR.exists():
@@ -375,86 +343,125 @@ def main():
 
     pip_exe = get_venv_pip()
     if not pip_exe.exists():
-        print("  " + err(f"pip not found at {pip_exe}. Virtual environment may be corrupted."))
+        print("  " + err(f"pip not found at {pip_exe}. Virtual environment corrupted."))
         sys.exit(1)
+        
+    # Upgrade pip
+    run_pip_cmd(["install", "--upgrade", "pip"], "pip upgrade")
 
-    # 2. Hardware Detection
     print_section("  HARDWARE DETECTION")
     print()
+    has_gpu, gpu_name = has_nvidia_gpu()
+    gpu_detected = False
+    
     if args.cpu_only:
-        gpu_detected = False
         print("  " + skip("Mode: CPU-only (forced by --cpu-only)"))
     elif args.gpu:
         gpu_detected = True
         print("  " + ok("Mode: GPU-capable (forced by --gpu)"))
     else:
         print("  " + C.GRAY + "Detecting NVIDIA GPU..." + C.RESET)
-        gpu_detected = has_nvidia_gpu()
-        if gpu_detected:
-            print("  " + ok("NVIDIA GPU detected"))
+        if has_gpu:
+            print("  " + ok(f"NVIDIA GPU detected: {gpu_name}"))
             print("  " + ok("Mode: GPU-capable"))
+            gpu_detected = True
         else:
             print("  " + skip("NVIDIA GPU not detected"))
             print("  " + skip("Mode: CPU-only"))
-
-    # 3. Base requirements
+            
     print_section("  PYTHON DEPENDENCIES")
-    base_req = ENGINE_DIR / "requirements-base.txt"
-    run_pip_install(base_req)
-
-    # 4. Hardware-specific requirements
+    run_pip_cmd(["install", "-r", "requirements-base.txt"], "installing requirements-base.txt")
+    
     if gpu_detected:
-        gpu_req = ENGINE_DIR / "requirements-gpu.txt"
         print("\n  " + C.PURPLE + "Installing GPU dependencies..." + C.RESET)
-        run_pip_install(gpu_req)
+        run_pip_cmd(["install", "-r", "requirements-gpu.txt"], "installing requirements-gpu.txt")
     else:
         cpu_req = ENGINE_DIR / "requirements-cpu.txt"
         print("\n  " + skip("GPU dependencies skipped (CPU-only mode)"))
-        if (cpu_req.exists() and cpu_req.read_text().strip()
-                and not cpu_req.read_text().strip().startswith("#")):
-            run_pip_install(cpu_req)
+        if cpu_req.exists() and cpu_req.read_text().strip() and not cpu_req.read_text().strip().startswith("#"):
+            run_pip_cmd(["install", "-r", "requirements-cpu.txt"], "installing requirements-cpu.txt")
+            
+    print("\n  " + C.GRAY + "Validating dependency graph (pip check)..." + C.RESET)
+    try:
+        subprocess.check_call([str(pip_exe), "check"], cwd=str(ENGINE_DIR))
+        print("  " + ok("Python dependencies validated."))
+    except subprocess.CalledProcessError:
+        print("  " + err("pip check failed! Dependency conflicts detected."))
+        sys.exit(1)
 
-    # 5. Desktop dependencies
     print_section("  DESKTOP SETUP")
     print()
-    if DESKTOP_DIR.exists() and (DESKTOP_DIR / "package.json").exists():
-        print("  " + C.GRAY + "Installing desktop dependencies (npm install)..." + C.RESET)
-        npm_cmd = "npm.cmd" if IS_WINDOWS else "npm"
-        try:
-            subprocess.check_call([npm_cmd, "install"], cwd=str(DESKTOP_DIR))
-            print("  " + ok("Desktop dependencies installed."))
-            
-            print("  " + C.GRAY + "Building desktop executable (npm run tauri build)..." + C.RESET)
-            print("  " + C.GRAY + "This may take a few minutes the first time to compile Rust dependencies." + C.RESET)
-            subprocess.check_call([npm_cmd, "run", "tauri", "build"], cwd=str(DESKTOP_DIR))
-            print("  " + ok("Desktop executable built."))
-        except FileNotFoundError:
-            print("  " + warn(f"'{npm_cmd}' not found."))
-            print("  Please install Node.js from " + C.CYAN + "https://nodejs.org/" + C.RESET)
-            print(f"  Then run 'npm install' and 'npm run tauri build' in {DESKTOP_DIR.name}/ manually.")
-        except subprocess.CalledProcessError:
-            print("  " + err("Failed to install or build desktop dependencies."))
-            print(f"  Please run 'npm install' and 'npm run tauri build' in {DESKTOP_DIR.name}/ manually.")
+    npm_cmd = shutil.which("npm")
+    
+    print("  " + C.GRAY + "Installing desktop dependencies (npm install)..." + C.RESET)
+    try:
+        subprocess.check_call([npm_cmd, "install"], cwd=str(DESKTOP_DIR))
+        print("  " + ok("Desktop dependencies installed."))
+    except subprocess.CalledProcessError:
+        print("  " + err("Failed to install desktop dependencies (npm install failed)."))
+        sys.exit(1)
+        
+    print("\n  " + C.GRAY + "Building desktop executable (npm run tauri build -- --no-bundle)..." + C.RESET)
+    print("  " + wait("This may take a few minutes to compile Rust dependencies."))
+    try:
+        subprocess.check_call([npm_cmd, "run", "tauri", "build", "--", "--no-bundle"], cwd=str(DESKTOP_DIR))
+    except subprocess.CalledProcessError:
+        print("\n  " + err("Tauri build failed."))
+        sys.exit(1)
+        
+    if check_built_binary():
+        print("\n  " + ok("Desktop executable built successfully."))
     else:
-        print("  " + skip(f"Skipped: {DESKTOP_DIR.name}/package.json not found."))
+        print("\n  " + err("Tauri build completed, but executable was not found in target/release."))
+        sys.exit(1)
+        
+    gemini_key, groq_key = configure_ai_providers()
 
-    # 6. AI provider configuration
-    configure_ai_providers()
-
-    # 7. Completion block — read back the final written state
-    final_groq = ""
-    final_gemini = ""
-    env_file = ENGINE_DIR / ".env"
-    if env_file.exists():
-        for line in env_file.read_text(encoding="utf-8").splitlines():
-            ls = line.strip()
-            if ls.startswith("GROQ_API_KEY="):
-                final_groq = ls.split("=", 1)[1].strip(" '\"")
-            elif ls.startswith("GEMINI_API_KEY="):
-                final_gemini = ls.split("=", 1)[1].strip(" '\"")
-
-    print_setup_complete(bool(final_gemini), bool(final_groq))
-
+    print()
+    print_divider()
+    print()
+    print("  " + C.BOLD + C.WHITE + "SETUP COMPLETE" + C.RESET)
+    print()
+    
+    print(f"  {'Python environment':<20} {ok('')}")
+    print(f"  {'Python dependencies':<20} {ok('')}")
+    print(f"  {'Node dependencies':<20} {ok('')}")
+    print(f"  {'Rust/Cargo':<20} {ok('')}")
+    print(f"  {'Tauri build':<20} {ok('')}")
+    print(f"  {'Whisper environment':<20} {ok('')}")
+    print(f"  {'.env':<20} {ok('')}")
+    
+    print()
+    print("  " + C.BOLD + "AI Providers" + C.RESET)
+    print(f"    {'Gemini':<18} {'Configured' if gemini_key else 'Not configured'}")
+    print(f"    {'Groq':<18} {'Configured' if groq_key else 'Not configured'}")
+    
+    print()
+    print("  " + C.BOLD + "AI Routing" + C.RESET)
+    if gemini_key and groq_key:
+        print("    Gemini -> Groq fallback")
+    elif gemini_key:
+        print("    Gemini")
+    elif groq_key:
+        print("    Groq")
+    else:
+        print("    Unavailable")
+        print("    Local recording and transcription still work.")
+        
+    print()
+    print("  " + C.BOLD + "Hardware" + C.RESET)
+    if gpu_detected:
+        print(f"    {'NVIDIA GPU':<18} {gpu_name if gpu_name else 'Detected'}")
+        print(f"    {'Transcription':<18} CUDA / medium")
+    else:
+        print(f"    {'Transcription':<18} CPU / medium")
+    
+    print()
+    print_divider()
+    print()
+    print("  " + C.BOLD + "Start MeetNote with:" + C.RESET)
+    print("  " + C.GREEN + "  python run_meetnote.py" + C.RESET)
+    print()
 
 if __name__ == "__main__":
     main()

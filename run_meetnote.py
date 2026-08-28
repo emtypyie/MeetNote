@@ -839,9 +839,15 @@ def choose_desktop_mode(args: argparse.Namespace, report: ValidationReport) -> s
         return "built"
     if args.dev:
         return "dev"
-    # Auto: prefer a built executable; fall back to dev mode. Never rebuild
-    # automatically — that's a deliberate, explicit action, not a launcher default.
-    return "built" if report.built_executable is not None else "dev"
+    
+    # Auto mode: prefer built executable. NEVER silently fall back to dev mode.
+    if report.built_executable is not None:
+        return "built"
+    
+    raise MissingDependencyError(
+        "No built desktop executable was found.\n"
+        "Please run 'python setup.py' to build the MeetNote application."
+    )
 
 
 def main() -> int:
@@ -994,6 +1000,22 @@ def main() -> int:
             
             logger.info("Starting MeetNote desktop application with MEETNOTE_LAUNCHER_MANAGED=1")
             desktop_process = start_desktop(desktop_mode, report.built_executable)
+            
+            # Wait a short grace window to ensure the desktop process didn't crash immediately
+            time.sleep(1.0)
+            if desktop_process.poll() is not None:
+                # Process exited almost immediately
+                print()
+                print(_BORDER)
+                print(_C.RED + _C.BOLD + "MEETNOTE ERROR".center(_W) + _C.RESET)
+                print(_BORDER)
+                print()
+                print("  " + _err(f"Desktop application failed to start (exit code {desktop_process.returncode})."))
+                print("  " + _info("Check logs/launcher.log for details."))
+                print()
+                engine.stop(reason="desktop failed to start")
+                return 1
+
             logger.info(
                 "Desktop process started successfully (pid=%s). Engine and desktop both running. MeetNote is ready.",
                 desktop_process.pid,
@@ -1004,7 +1026,19 @@ def main() -> int:
             print(_C.GREEN + _C.BOLD + "MEETNOTE RUNNING".center(_W) + _C.RESET)
             print(_BORDER)
             print()
-            print("  MeetNote is ready.")
+
+            if engine.state == EngineState.DEGRADED:
+                print("  MeetNote is running (DEGRADED mode).")
+                print("  Transcription is unavailable.")
+            else:
+                health = _try_fetch_health() or {}
+                whisper = health.get("whisper") or {}
+                if whisper.get("loaded"):
+                    print("  MeetNote is ready.")
+                else:
+                    print("  MeetNote is running.")
+                    print("  Whisper is still loading in the background.")
+
             print()
             print("  Close the desktop window to quit.")
             print()
