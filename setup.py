@@ -423,13 +423,18 @@ def main():
         try:
             subprocess.check_call([npm_cmd, "install"], cwd=str(DESKTOP_DIR))
             print("  " + ok("Desktop dependencies installed."))
+            
+            print("  " + C.GRAY + "Building desktop executable (npm run tauri build)..." + C.RESET)
+            print("  " + C.GRAY + "This may take a few minutes the first time to compile Rust dependencies." + C.RESET)
+            subprocess.check_call([npm_cmd, "run", "tauri", "build"], cwd=str(DESKTOP_DIR))
+            print("  " + ok("Desktop executable built."))
         except FileNotFoundError:
             print("  " + warn(f"'{npm_cmd}' not found."))
             print("  Please install Node.js from " + C.CYAN + "https://nodejs.org/" + C.RESET)
-            print(f"  Then run 'npm install' in {DESKTOP_DIR.name}/ manually.")
+            print(f"  Then run 'npm install' and 'npm run tauri build' in {DESKTOP_DIR.name}/ manually.")
         except subprocess.CalledProcessError:
-            print("  " + err("Failed to install desktop dependencies."))
-            print(f"  Please run 'npm install' in {DESKTOP_DIR.name}/ manually.")
+            print("  " + err("Failed to install or build desktop dependencies."))
+            print(f"  Please run 'npm install' and 'npm run tauri build' in {DESKTOP_DIR.name}/ manually.")
     else:
         print("  " + skip(f"Skipped: {DESKTOP_DIR.name}/package.json not found."))
 

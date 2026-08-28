@@ -622,7 +622,7 @@ def _try_fetch_health() -> Optional[dict]:
                 data = json.loads(resp.read().decode("utf-8"))
                 # Validate that response has expected structure (at minimum, hardware and status fields)
                 # This guards against a partial/malformed response being accepted as "ready"
-                if isinstance(data, dict) and "hardware" in data:
+                if isinstance(data, dict) and "hardware" in data and data.get("service") == "meetnote-engine":
                     return data
     except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError, ValueError):
         pass

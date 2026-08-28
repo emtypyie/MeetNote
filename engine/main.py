@@ -247,6 +247,7 @@ def health():
     restart_required = current_hardware_mode != engine_state.active_hardware_preference
 
     return {
+        "service": "meetnote-engine",
         "os": os_display_name(),
         "hardware": engine_state.hardware_profile.to_dict() if engine_state.hardware_profile else None,
         "transcription_mode": engine_state.mode_decision.to_dict() if engine_state.mode_decision else None,
