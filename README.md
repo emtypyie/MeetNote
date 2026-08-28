@@ -72,6 +72,15 @@ python3 setup.py
 
 *(See `docs/LINUX_TESTING.md` for more details on the experimental Linux implementation.)*
 
+## Updating MeetNote
+
+To get the latest version of MeetNote, simply pull the latest changes from GitHub and re-run the setup script. The setup script will safely update your dependencies and recompile the desktop application without overwriting your existing settings or `.env` file.
+
+```bash
+git pull
+python setup.py
+```
+
 ## AI Provider Setup
 
 MeetNote supports Gemini and Groq for generating notes. The supported configurations are:
