@@ -1,11 +1,54 @@
 import { useEffect, useState } from "react";
-import { FolderOpen } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Cpu,
+  FolderOpen,
+  Languages,
+  Loader2,
+  RefreshCw,
+  Settings as SettingsIcon,
+  Sparkles,
+  Volume2,
+} from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { openPath } from "@tauri-apps/plugin-opener";
-import { Button, Card, HealthRow, SectionLabel, Select } from "../components/ui";
+import { Button, Card, HealthRow, SectionLabel, Select, StatusDot } from "../components/ui";
 import { ProviderStatusRow } from "../components/ProviderStatusRow";
 import { engineClient } from "../services/engineClient";
 import type { AppConfig, HealthResponse, NoteTemplate } from "../types/engine";
+
+const HARDWARE_LABEL: Record<string, string> = {
+  automatic: "Automatic",
+  gpu: "NVIDIA GPU",
+  cpu: "CPU only",
+};
+
+/** Opens a path (file or directory) via the native `open_path` Tauri
+ * command, tracking its own busy/error state. Two independent instances
+ * are used below (storage root, meetings directory) so one button's
+ * failure or in-flight state never affects the other's. */
+function useOpenPath() {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function open(path: string | undefined) {
+    setError(null);
+    if (!path) {
+      setError("No path is available yet.");
+      return;
+    }
+    setPending(true);
+    try {
+      await invoke<void>("open_path", { path });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return { open, pending, error };
+}
 
 export function Settings() {
   const [config, setConfig] = useState<AppConfig | null>(null);
@@ -19,15 +62,24 @@ export function Settings() {
   const [showRestartDialog, setShowRestartDialog] = useState(false);
   const [isRestarting, setIsRestarting] = useState(false);
   const [restartError, setRestartError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const storageOpen = useOpenPath();
+  const meetingsOpen = useOpenPath();
 
-  useEffect(() => {
-    engineClient.getConfig().then((c) => {
-      setConfig(c);
-      setChunkSecondsInput(String(c.audio.chunk_seconds));
-    });
-    engineClient.health().then(setHealth);
-    engineClient.listTemplates().then(setTemplates);
-  }, []);
+  function loadSettings() {
+    setLoadError(null);
+    engineClient
+      .getConfig()
+      .then((c) => {
+        setConfig(c);
+        setChunkSecondsInput(String(c.audio.chunk_seconds));
+      })
+      .catch((err) => setLoadError(err instanceof Error ? err.message : String(err)));
+    engineClient.health().then(setHealth).catch(() => {});
+    engineClient.listTemplates().then(setTemplates).catch(() => {});
+  }
+
+  useEffect(loadSettings, []);
 
   async function recheckProviders() {
     setRechecking(true);
@@ -85,22 +137,60 @@ export function Settings() {
     }
   }
 
+  if (loadError) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 px-8 text-center">
+        <AlertTriangle size={24} className="text-[var(--color-danger)]" />
+        <p className="text-sm font-medium text-[var(--color-text)]">Unable to load settings</p>
+        <p className="max-w-sm text-xs text-[var(--color-text-muted)]">
+          MeetNote could not reach the local engine.
+        </p>
+        <Button variant="secondary" onClick={loadSettings}>
+          <RefreshCw size={14} />
+          Try Again
+        </Button>
+      </div>
+    );
+  }
+
   if (!config) {
-    return <div className="px-8 py-10 text-sm text-[var(--color-text-muted)]">Loading…</div>;
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-2 px-8 text-center">
+        <Loader2 size={20} className="animate-spin text-[var(--color-text-faint)]" />
+        <p className="text-sm text-[var(--color-text-muted)]">Loading settings…</p>
+      </div>
+    );
   }
 
   const hw = health?.hardware;
   const mode = health?.transcription_mode;
 
   return (
-    <div className="mx-auto max-w-2xl px-8 py-10 pb-16">
+    <div className="mx-auto max-w-5xl px-10 py-10 pb-16">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-[var(--color-text)]">Settings</h1>
-        {saved && <span className="text-xs text-[var(--color-success)]">Saved</span>}
+        <div>
+          <h1 className="text-xl font-semibold text-[var(--color-text)]">Settings</h1>
+          <p className="mt-1 text-sm text-[var(--color-text-muted)]">
+            Configure how MeetNote records, transcribes, and generates notes.
+          </p>
+        </div>
+        {saved && (
+          <span className="flex items-center gap-1.5 text-xs text-[var(--color-success)]">
+            <CheckCircle2 size={13} />
+            Saved
+          </span>
+        )}
       </div>
 
-      <Card className="mt-6 p-5">
-        <SectionLabel>General</SectionLabel>
+      {/* CSS multi-column layout, not a row-paired grid: each card keeps its
+          natural height and the browser balances the two columns by total
+          content, so a tall Transcription card never forces an empty gap
+          beside a short Language card in the same "row" (there is no row).
+          break-inside-avoid keeps a card from being visually split across
+          the column boundary. */}
+      <div className="mt-6 columns-1 gap-4 lg:columns-2">
+      <Card className="mb-4 break-inside-avoid p-5">
+        <SectionLabel icon={SettingsIcon}>General</SectionLabel>
 
         <Field label="Startup behavior">
           <Select
@@ -129,17 +219,21 @@ export function Settings() {
             <Button
               variant="secondary"
               size="sm"
-              onClick={() => config.storage_root && openPath(config.storage_root)}
+              onClick={() => storageOpen.open(config.storage_root)}
+              loading={storageOpen.pending}
             >
-              <FolderOpen size={14} />
+              {!storageOpen.pending && <FolderOpen size={14} />}
               Open
             </Button>
           </div>
+          {storageOpen.error && (
+            <p className="mt-1.5 text-xs text-[var(--color-danger)]">{storageOpen.error}</p>
+          )}
         </Field>
       </Card>
 
-      <Card className="mt-4 p-5">
-        <SectionLabel>Audio</SectionLabel>
+      <Card className="mb-4 break-inside-avoid p-5">
+        <SectionLabel icon={Volume2}>Audio</SectionLabel>
         <HealthRow
           label="Microphone"
           ok={!!health?.audio_devices.microphone_ok}
@@ -151,8 +245,8 @@ export function Settings() {
           detail={health?.audio_devices.system_audio_name ?? "Automatic"}
         />
         <p className="mt-2 text-xs text-[var(--color-text-faint)]">
-          MeetNote automatically uses your default microphone and default output device. Manual device
-          selection and input/output level controls are planned but not implemented in this version.
+          Uses your default microphone and speakers automatically. Manual device selection isn&rsquo;t
+          available yet.
         </p>
 
         <Field label="Chunk length (seconds)">
@@ -181,14 +275,55 @@ export function Settings() {
                 e.currentTarget.blur();
               }
             }}
-            className={`${selectClass} ${chunkError ? "border-red-500 focus:border-red-500" : ""}`}
+            className={`${selectClass} ${chunkError ? "border-[var(--color-danger)] focus:border-[var(--color-danger)]" : ""}`}
           />
-          {chunkError && <p className="mt-1 text-xs text-red-500">{chunkError}</p>}
+          {chunkError && <p className="mt-1 text-xs text-[var(--color-danger)]">{chunkError}</p>}
         </Field>
       </Card>
 
-      <Card className="mt-4 p-5">
-        <SectionLabel>Transcription</SectionLabel>
+      <Card className="mb-4 break-inside-avoid p-5">
+        <SectionLabel icon={Cpu}>Transcription</SectionLabel>
+
+        {(() => {
+          const pref = health?.whisper?.active_hardware_preference || "automatic";
+          let modeLabel = "Unknown";
+          let subText = "";
+          let isError = false;
+
+          if (pref === "automatic") {
+            modeLabel = hw?.cuda_usable ? "NVIDIA GPU" : "CPU";
+          } else if (pref === "cpu") {
+            modeLabel = "CPU";
+            if (hw?.gpu_name) subText = "GPU available but disabled by preference.";
+          } else if (pref === "gpu") {
+            if (hw?.cuda_usable) {
+              modeLabel = "NVIDIA GPU";
+            } else {
+              modeLabel = "Unavailable";
+              subText = hw?.cuda_failure_reason || "CUDA is not available.";
+              isError = true;
+            }
+          }
+
+          return (
+            <div
+              className={`mb-4 flex items-center justify-between rounded-lg px-3 py-2.5 ${
+                isError
+                  ? "bg-[var(--color-danger-soft)]"
+                  : "bg-[var(--color-surface-2)]"
+              }`}
+            >
+              <div>
+                <p className="text-[11px] uppercase tracking-wide text-[var(--color-text-faint)]">Active mode</p>
+                <p className={`text-sm font-semibold ${isError ? "text-[var(--color-danger)]" : "text-[var(--color-text)]"}`}>
+                  {modeLabel === "NVIDIA GPU" ? "Using NVIDIA GPU acceleration" : modeLabel === "CPU" ? "Running on CPU" : modeLabel}
+                </p>
+                {subText && <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">{subText}</p>}
+              </div>
+              <StatusDot ok={!isError} />
+            </div>
+          );
+        })()}
 
         <Field label="Transcription hardware">
           <Select
@@ -208,16 +343,17 @@ export function Settings() {
           )}
           <p className="mt-2 text-xs text-[var(--color-text-faint)]">
             {(!config.transcription?.hardware_mode || config.transcription.hardware_mode === "automatic") &&
-              "Automatically uses NVIDIA GPU acceleration when available, otherwise uses CPU."}
+              "Uses NVIDIA GPU acceleration when available, otherwise uses CPU."}
             {config.transcription?.hardware_mode === "gpu" &&
-              "Always use NVIDIA GPU acceleration. MeetNote will not silently switch to CPU."}
+              "Always uses NVIDIA GPU acceleration. MeetNote will not silently switch to CPU."}
             {config.transcription?.hardware_mode === "cpu" &&
-              "Use CPU transcription even when a compatible NVIDIA GPU is available."}
+              "Uses CPU transcription even when a compatible NVIDIA GPU is available."}
           </p>
           {health?.whisper?.restart_required && !pendingHardwareMode && !showRestartDialog && (
-            <div className="mt-4 rounded-md bg-[var(--color-surface-2)] p-3 border border-[var(--color-border)] flex items-center justify-between">
-              <span className="text-sm font-medium text-amber-500">
-                Restart required. {health.whisper.saved_hardware_preference === 'gpu' ? 'NVIDIA GPU' : health.whisper.saved_hardware_preference === 'cpu' ? 'CPU only' : 'Automatic'} will be used after MeetNote restarts.
+            <div className="mt-4 rounded-md bg-[var(--color-warning-soft)] p-3 flex items-center justify-between gap-3">
+              <span className="flex items-center gap-2 text-sm font-medium text-[var(--color-warning)]">
+                <RefreshCw size={14} className="shrink-0" />
+                Restart required. {HARDWARE_LABEL[health.whisper.saved_hardware_preference ?? "automatic"]} will be used after MeetNote restarts.
               </span>
               <Button variant="primary" size="sm" onClick={async () => {
                 setIsRestarting(true);
@@ -228,7 +364,10 @@ export function Settings() {
                   setIsRestarting(false);
                   setRestartError(err.message);
                 }
-              }}>Restart Now</Button>
+              }}>
+                <RefreshCw size={14} />
+                Restart Now
+              </Button>
             </div>
           )}
         </Field>
@@ -238,7 +377,7 @@ export function Settings() {
           <HealthRow label="CPU" ok detail={hw ? `${hw.cpu_model} (${hw.cpu_logical} threads)` : undefined} />
           <HealthRow label="RAM" ok detail={hw ? `${hw.ram_total_gb.toFixed(1)} GB` : undefined} />
           <HealthRow label="Detected GPU" ok={!!hw?.gpu_name} detail={hw?.gpu_name ?? "None detected"} />
-          <HealthRow label="VRAM" ok={!!hw?.gpu_vram_mb} detail={hw?.gpu_vram_mb ? `${hw.gpu_vram_mb} MB` : "—"} />
+          <HealthRow label="VRAM" ok={!!hw?.gpu_vram_mb} detail={hw?.gpu_vram_mb ? `${hw.gpu_vram_mb} MB` : "N/A"} />
           <HealthRow
             label="CUDA"
             ok={!!hw?.cuda_usable}
@@ -246,54 +385,11 @@ export function Settings() {
           />
           <HealthRow label="Whisper Model" ok detail={mode?.model_size} />
           <HealthRow label="Compute Type" ok detail={mode?.compute_type} />
-          
-          {(() => {
-            const pref = health?.whisper?.active_hardware_preference || "automatic";
-            let modeLabel = "Unknown";
-            let subText = "";
-            let isError = false;
-
-            if (pref === "automatic") {
-              if (hw?.cuda_usable) {
-                modeLabel = "NVIDIA GPU";
-              } else {
-                modeLabel = "CPU";
-              }
-            } else if (pref === "cpu") {
-              modeLabel = "CPU";
-              if (hw?.gpu_name) {
-                subText = "GPU available but disabled by preference.";
-              }
-            } else if (pref === "gpu") {
-              if (hw?.cuda_usable) {
-                modeLabel = "NVIDIA GPU";
-              } else {
-                modeLabel = "Unavailable";
-                subText = hw?.cuda_failure_reason || "CUDA is not available.";
-                isError = true;
-              }
-            }
-
-            return (
-              <div className="flex flex-col gap-1">
-                <HealthRow 
-                  label="Current Mode" 
-                  ok={!isError} 
-                  detail={modeLabel} 
-                />
-                {subText && (
-                  <p className={`pl-32 text-xs ${isError ? "text-[var(--color-danger)]" : "text-[var(--color-text-faint)]"}`}>
-                    {subText}
-                  </p>
-                )}
-              </div>
-            );
-          })()}
         </div>
       </Card>
 
-      <Card className="mt-4 p-5">
-        <SectionLabel>Language & Translation</SectionLabel>
+      <Card className="mb-4 break-inside-avoid p-5">
+        <SectionLabel icon={Languages}>Language & Translation</SectionLabel>
         <Field label="Transcript output language">
           <Select
             value={config.transcription?.output_language || "en"}
@@ -303,24 +399,29 @@ export function Settings() {
             ]}
           />
           <p className="mt-2 text-xs text-[var(--color-text-faint)]">
-            MeetNote will automatically detect the spoken language. If it is not English, it will be translated to English.
+            MeetNote detects the spoken language automatically. Non-English speech is translated to
+            English.
           </p>
         </Field>
       </Card>
 
-      <Card className="mt-4 p-5">
-        <div className="flex items-center justify-between">
-          <SectionLabel>AI</SectionLabel>
-          <Button variant="ghost" size="sm" onClick={recheckProviders} disabled={rechecking}>
-            {rechecking ? "Checking…" : "Recheck"}
-          </Button>
-        </div>
-        <ProviderStatusRow label="Gemini API" provider={health?.ai_providers?.gemini} />
-        <ProviderStatusRow label="Groq API" provider={health?.ai_providers?.groq} />
-        
+      <Card className="mb-4 break-inside-avoid p-5">
+        <SectionLabel
+          icon={Sparkles}
+          trailing={
+            <Button variant="ghost" size="sm" onClick={recheckProviders} loading={rechecking}>
+              Recheck
+            </Button>
+          }
+        >
+          AI
+        </SectionLabel>
+        <ProviderStatusRow label="Gemini" provider={health?.ai_providers?.gemini} />
+        <ProviderStatusRow label="Groq" provider={health?.ai_providers?.groq} />
+
         {health?.ai_providers?.primary && (
-          <div className="mt-3 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3">
-            <p className="text-xs font-medium text-[var(--color-text)] mb-1">Active Configuration</p>
+          <div className="mt-3 rounded-lg bg-[var(--color-surface-2)] p-3">
+            <p className="text-xs font-medium text-[var(--color-text-secondary)] mb-1">Active configuration</p>
             <div className="flex justify-between items-center text-xs">
               <span className="text-[var(--color-text-muted)]">Primary</span>
               <span className="text-[var(--color-text)] capitalize">{health.ai_providers.primary}</span>
@@ -335,8 +436,8 @@ export function Settings() {
         )}
 
         <p className="mt-3 text-xs text-[var(--color-text-faint)]">
-          Configure either Gemini or Groq in the MeetNote environment.
-          When both are configured, Gemini is used first and Groq is used as fallback.
+          Configure either Gemini or Groq. When both are configured, Gemini is used first and Groq is
+          used as fallback.
         </p>
         <p className="mt-2 text-xs text-[var(--color-text-faint)]">
           API keys are never entered in the app. Add <code>GEMINI_API_KEY</code> and/or{" "}
@@ -347,40 +448,46 @@ export function Settings() {
         </p>
       </Card>
 
-      <Card className="mt-4 p-5">
-        <SectionLabel>Storage</SectionLabel>
+      <Card className="mb-4 break-inside-avoid p-5">
+        <SectionLabel icon={FolderOpen}>Storage</SectionLabel>
         <Button
           variant="secondary"
           size="sm"
-          onClick={() => config.storage_root && openPath(config.storage_root)}
+          onClick={() => meetingsOpen.open(config.meetings_root)}
+          loading={meetingsOpen.pending}
         >
-          <FolderOpen size={14} />
+          {!meetingsOpen.pending && <FolderOpen size={14} />}
           Open meetings directory
         </Button>
+        {meetingsOpen.error && (
+          <p className="mt-1.5 text-xs text-[var(--color-danger)]">{meetingsOpen.error}</p>
+        )}
         <p className="mt-2 text-xs text-[var(--color-text-faint)]">
-          MeetNote stores your API keys securely in your system's native keychain (Credential Manager on
-          Windows, Keychain on macOS). They are never saved in plain text.
+          API keys live only in <code>engine/.env</code>, which is excluded from Git. MeetNote never
+          displays, transmits, or stores them anywhere else.
         </p>
       </Card>
-      
+      </div>
+
       {showRestartDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
-          <Card className="w-full max-w-md p-6 bg-[var(--color-surface)] shadow-2xl">
+        <div className="animate-overlay-in fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+          <Card className="animate-modal-in w-full max-w-md p-6 bg-[var(--color-surface-2)] shadow-[var(--shadow-lg)]">
             {isRestarting ? (
-              <div className="flex flex-col items-center justify-center py-6">
-                 <h2 className="text-lg font-semibold text-[var(--color-text)]">Restarting MeetNote...</h2>
-                 <p className="mt-4 text-sm text-[var(--color-text-muted)] text-center leading-relaxed">
-                   Saving configuration<br/>Stopping services<br/>Restarting application
+              <div className="flex flex-col items-center justify-center gap-3 py-6 text-center">
+                 <Loader2 size={22} className="animate-spin text-[var(--color-accent)]" />
+                 <h2 className="text-lg font-semibold text-[var(--color-text)]">Restarting MeetNote…</h2>
+                 <p className="text-sm text-[var(--color-text-muted)] leading-relaxed">
+                   Saving configuration, stopping services, and restarting the application.
                  </p>
               </div>
             ) : restartError ? (
               <div>
-                <h2 className="text-lg font-semibold text-[var(--color-text)]">MeetNote could not restart automatically.</h2>
-                <p className="mt-3 text-sm text-[var(--color-text-muted)]">
-                  Your new transcription setting has been saved.
-                </p>
-                <p className="mt-3 text-sm text-[var(--color-text-muted)]">
-                  Please restart MeetNote manually.
+                <div className="mb-3 flex items-center gap-2.5">
+                  <AlertTriangle size={18} className="text-[var(--color-warning)]" />
+                  <h2 className="text-lg font-semibold text-[var(--color-text)]">Could not restart automatically</h2>
+                </div>
+                <p className="text-sm text-[var(--color-text-muted)]">
+                  Your new transcription setting has been saved. Please restart MeetNote manually.
                 </p>
                 {restartError && <p className="mt-3 text-xs text-[var(--color-danger)]">{restartError}</p>}
                 <div className="mt-6 flex justify-end gap-3">
@@ -389,29 +496,32 @@ export function Settings() {
               </div>
             ) : (
               <>
-                <h2 className="text-lg font-semibold text-[var(--color-text)]">Restart MeetNote?</h2>
-                <p className="mt-2 text-sm text-[var(--color-text-muted)]">
-                  Changing transcription hardware requires a restart.
+                <div className="mb-1 flex items-center gap-2.5">
+                  <RefreshCw size={18} className="text-[var(--color-accent)]" />
+                  <h2 className="text-lg font-semibold text-[var(--color-text)]">Restart required</h2>
+                </div>
+                <p className="text-sm text-[var(--color-text-muted)]">
+                  Changing transcription hardware requires restarting MeetNote.
                 </p>
-                
-                <div className="mt-5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-4 text-sm">
-                  <div className="flex justify-between mb-3 border-b border-[var(--color-border)] pb-3">
+
+                <div className="mt-5 rounded-lg bg-[var(--color-surface-1)] p-4 text-sm">
+                  <div className="flex justify-between mb-3 border-b border-[var(--color-border-subtle)] pb-3">
                     <span className="text-[var(--color-text-muted)]">Current mode</span>
                     <span className="font-medium text-[var(--color-text)]">
-                      {health?.whisper?.active_hardware_preference === 'gpu' ? 'NVIDIA GPU' : health?.whisper?.active_hardware_preference === 'cpu' ? 'CPU only' : 'Automatic'}
+                      {HARDWARE_LABEL[health?.whisper?.active_hardware_preference ?? "automatic"]}
                     </span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-[var(--color-text-muted)]">New mode</span>
                     <span className="font-medium text-[var(--color-text)]">
-                      {pendingHardwareMode === 'gpu' ? 'NVIDIA GPU' : pendingHardwareMode === 'cpu' ? 'CPU only' : 'Automatic'}
+                      {HARDWARE_LABEL[pendingHardwareMode ?? "automatic"]}
                     </span>
                   </div>
                 </div>
 
                 <div className="mt-6 flex justify-end gap-3">
                   <Button variant="secondary" onClick={cancelRestart}>Cancel</Button>
-                  <Button variant="primary" onClick={confirmRestart}>Restart</Button>
+                  <Button variant="primary" onClick={confirmRestart}>Restart Now</Button>
                 </div>
               </>
             )}

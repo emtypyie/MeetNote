@@ -182,6 +182,7 @@ export interface AppConfig {
     retention_days: number | null;
   };
   storage_root?: string;
+  meetings_root?: string;
 }
 
 export type WSMessage =

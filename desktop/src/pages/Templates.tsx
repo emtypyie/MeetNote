@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Plus, Trash2, X } from "lucide-react";
+import { FileStack, Pencil, Plus, Trash2, X } from "lucide-react";
 import { Button, Card, SectionLabel } from "../components/ui";
 import { engineClient } from "../services/engineClient";
 import type { NoteTemplate } from "../types/engine";
@@ -34,7 +34,7 @@ export function Templates() {
   }
 
   return (
-    <div className="mx-auto max-w-2xl px-8 py-10">
+    <div className="mx-auto max-w-5xl px-10 py-10">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold text-[var(--color-text)]">Templates</h1>
         <Button variant="primary" onClick={() => setEditing(blankTemplate())}>
@@ -46,23 +46,29 @@ export function Templates() {
         Templates control the section structure of generated meeting notes.
       </p>
 
-      <div className="mt-6 flex flex-col gap-3">
+      <div className="mt-6 grid grid-cols-1 gap-3 lg:grid-cols-2">
         {templates.map((t) => (
           <Card key={t.id} className="p-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-medium text-[var(--color-text)]">{t.name}</h3>
-              <div className="flex gap-1.5">
-                <Button variant="ghost" size="sm" onClick={() => setEditing(t)}>
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h3 className="truncate text-sm font-medium text-[var(--color-text)]">{t.name}</h3>
+                <p className="mt-0.5 text-xs text-[var(--color-text-faint)]">
+                  {t.sections.length} {t.sections.length === 1 ? "section" : "sections"}
+                </p>
+              </div>
+              <div className="flex shrink-0 gap-1">
+                <Button variant="ghost" size="sm" onClick={() => setEditing(t)} aria-label={`Edit ${t.name}`}>
+                  <Pencil size={13} />
                   Edit
                 </Button>
                 {t.id !== "standard" && (
-                  <Button variant="ghost" size="sm" onClick={() => handleDelete(t.id)}>
+                  <Button variant="ghost" size="sm" onClick={() => handleDelete(t.id)} aria-label={`Delete ${t.name}`}>
                     <Trash2 size={13} />
                   </Button>
                 )}
               </div>
             </div>
-            <div className="mt-2 flex flex-wrap gap-1.5">
+            <div className="mt-3 flex flex-wrap gap-1.5">
               {t.sections.map((s) => (
                 <span
                   key={s}
@@ -77,11 +83,11 @@ export function Templates() {
       </div>
 
       {editing && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <Card className="w-[440px] max-h-[80vh] overflow-y-auto p-5">
+        <div className="animate-overlay-in fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <Card className="animate-modal-in w-[440px] max-h-[80vh] overflow-y-auto p-5 shadow-[var(--shadow-lg)]">
             <div className="flex items-center justify-between">
-              <SectionLabel>Edit Template</SectionLabel>
-              <button onClick={() => setEditing(null)} className="text-[var(--color-text-faint)] cursor-pointer">
+              <SectionLabel icon={FileStack}>Edit Template</SectionLabel>
+              <button onClick={() => setEditing(null)} className="text-[var(--color-text-faint)] cursor-pointer hover:text-[var(--color-text)]" aria-label="Close">
                 <X size={16} />
               </button>
             </div>

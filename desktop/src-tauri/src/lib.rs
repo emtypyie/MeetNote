@@ -177,13 +177,79 @@ fn open_in_notepad(path: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Resolves and validates a path before it's handed to the OS. Split out
+/// from `open_path` so it can be unit tested without actually spawning a
+/// process — spawning the real thing in a test would pop a live Explorer/
+/// Finder window on whatever machine runs `cargo test`.
+fn validate_open_target(path: &str) -> Result<PathBuf, String> {
+    if path.trim().is_empty() {
+        return Err("No path was provided.".to_string());
+    }
+    let resolved = PathBuf::from(path);
+    if !resolved.exists() {
+        return Err(format!("Path not found: {}", resolved.display()));
+    }
+    Ok(resolved)
+}
+
+/// Opens a file with its OS-associated default application, or a directory
+/// in the native file manager — the one authoritative "open this path"
+/// operation for the app (distinct from `open_in_notepad` above, which
+/// deliberately always opens in Notepad regardless of file association,
+/// for the narrower "Open Notes" case).
+///
+/// The path always originates from the engine itself (GET /config's
+/// `storage_root`/`meetings_root`, or an export path the engine already
+/// verified) rather than arbitrary user-typed input, but existence is
+/// still checked here as a belt-and-suspenders guard, and every failure
+/// (missing path, failed to launch) is returned to the caller rather than
+/// swallowed.
+#[tauri::command]
+fn open_path(path: String) -> Result<(), String> {
+    let resolved = validate_open_target(&path)?;
+
+    // `explorer.exe <path>` handles both cases on Windows: given a
+    // directory it opens a normal Explorer window there; given a file it
+    // launches whatever application Windows has associated with it, the
+    // same as double-clicking it in Explorer. The path is passed as a
+    // single argument vector entry — never through a shell/`cmd /C` — so
+    // spaces, parentheses, and Unicode characters need no escaping and
+    // there is no shell-injection surface to worry about.
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("explorer.exe")
+            .arg(&resolved)
+            .spawn()
+            .map_err(|e| format!("Failed to open {}: {e}", resolved.display()))?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(&resolved)
+            .spawn()
+            .map_err(|e| format!("Failed to open {}: {e}", resolved.display()))?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        Command::new("xdg-open")
+            .arg(&resolved)
+            .spawn()
+            .map_err(|e| format!("Failed to open {}: {e}", resolved.display()))?;
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
-        .plugin(tauri_plugin_opener::init())
         .manage(EngineHandle(Mutex::new(None)))
-        .invoke_handler(tauri::generate_handler![engine_port, restart_app, open_in_notepad])
+        .invoke_handler(tauri::generate_handler![
+            engine_port,
+            restart_app,
+            open_in_notepad,
+            open_path
+        ])
         .setup(|app| {
             spawn_engine(&app.handle());
             Ok(())
@@ -204,4 +270,59 @@ pub fn run() {
                 kill_engine(app_handle);
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_or_blank_path_is_rejected() {
+        assert!(validate_open_target("").is_err());
+        assert!(validate_open_target("   ").is_err());
+    }
+
+    #[test]
+    fn nonexistent_path_is_rejected_with_a_useful_message() {
+        let err = validate_open_target("Z:\\meetnote-path-that-should-never-exist\\nope").unwrap_err();
+        assert!(err.contains("not found"), "unexpected message: {err}");
+    }
+
+    #[test]
+    fn existing_file_is_accepted() {
+        let path = std::env::temp_dir().join("meetnote_open_path_test_file.txt");
+        std::fs::write(&path, "test").unwrap();
+        let result = validate_open_target(path.to_str().unwrap());
+        std::fs::remove_file(&path).ok();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn existing_directory_is_accepted() {
+        let dir = std::env::temp_dir();
+        assert!(validate_open_target(dir.to_str().unwrap()).is_ok());
+    }
+
+    #[test]
+    fn path_with_spaces_and_unicode_is_accepted_when_it_exists() {
+        let dir = std::env::temp_dir().join("MeetNote Test (café notes)");
+        std::fs::create_dir_all(&dir).unwrap();
+        let result = validate_open_target(dir.to_str().unwrap());
+        std::fs::remove_dir_all(&dir).ok();
+        assert!(result.is_ok());
+    }
+
+    // Manual-only smoke test: calls the real `open_path` command function
+    // (not just its validation helper), which really spawns explorer.exe
+    // and pops a visible window — never run as part of normal `cargo test`.
+    // Verified once by hand via `cargo test -- --ignored manual_smoke_test_actually_opens_explorer`
+    // during development of this command; left here `#[ignore]`d for anyone
+    // who needs to re-verify by hand later, not as a CI-run test.
+    #[test]
+    #[ignore]
+    fn manual_smoke_test_actually_opens_explorer() {
+        let dir = std::env::temp_dir();
+        let result = open_path(dir.to_str().unwrap().to_string());
+        assert!(result.is_ok(), "open_path returned an error: {result:?}");
+    }
 }

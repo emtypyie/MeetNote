@@ -13,7 +13,7 @@ export function RecoveryModal({
   meetings: MeetingMetadata[];
   onResolved: () => void;
 }) {
-  const [busy, setBusy] = useState(false);
+  const [busyAction, setBusyAction] = useState<"resume" | "startNew" | null>(null);
   const meeting = meetings[0];
   const navigate = useUIStore((s) => s.navigate);
   const hydrate = useMeetingStore((s) => s.hydrateFromCurrent);
@@ -21,33 +21,33 @@ export function RecoveryModal({
   if (!meeting) return null;
 
   async function resume() {
-    setBusy(true);
+    setBusyAction("resume");
     try {
       await engineClient.resumeAfterRestart(meeting.meeting_id);
       await hydrate();
       navigate({ name: "meeting" });
       onResolved();
     } finally {
-      setBusy(false);
+      setBusyAction(null);
     }
   }
 
   async function startNew() {
-    setBusy(true);
+    setBusyAction("startNew");
     try {
       await engineClient.abandonMeeting(meeting.meeting_id);
       onResolved();
       navigate({ name: "new-meeting" });
     } finally {
-      setBusy(false);
+      setBusyAction(null);
     }
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <Card className="w-[420px] p-6">
+    <div className="animate-overlay-in fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <Card className="animate-modal-in w-[420px] p-6 shadow-[var(--shadow-lg)]">
         <div className="flex items-start gap-3">
-          <div className="mt-0.5 shrink-0 rounded-full bg-[var(--color-warning)]/10 p-2">
+          <div className="mt-0.5 shrink-0 rounded-full bg-[var(--color-warning-soft)] p-2">
             <AlertTriangle size={18} className="text-[var(--color-warning)]" />
           </div>
           <div>
@@ -56,16 +56,16 @@ export function RecoveryModal({
             </h2>
             <p className="mt-1.5 text-sm text-[var(--color-text-muted)]">
               &ldquo;{meeting.title}&rdquo; was still recording when MeetNote last closed. Nothing has
-              been lost — the transcript recorded so far is saved. Resume it now, or leave it and start a
+              been lost: the transcript recorded so far is saved. Resume it now, or leave it and start a
               new meeting.
             </p>
           </div>
         </div>
         <div className="mt-5 flex justify-end gap-2">
-          <Button variant="secondary" onClick={startNew} disabled={busy}>
+          <Button variant="secondary" onClick={startNew} disabled={!!busyAction} loading={busyAction === "startNew"}>
             Start New Meeting
           </Button>
-          <Button variant="primary" onClick={resume} disabled={busy}>
+          <Button variant="primary" onClick={resume} disabled={!!busyAction} loading={busyAction === "resume"}>
             Resume
           </Button>
         </div>
