@@ -93,14 +93,6 @@ class WhisperTranscriber:
     def is_loaded(self) -> bool:
         return self._model is not None
 
-    def unload(self) -> None:
-        """Unload the model and explicitly run garbage collection to free VRAM."""
-        if self._model is not None:
-            self._model = None
-            import gc
-            gc.collect()
-            logger.info("Whisper model unloaded from %s", self.device)
-
     def transcribe_chunk(
         self, samples: np.ndarray, sample_rate: int, output_language: str = "en", retries: int = 1
     ) -> ChunkTranscriptionResult:

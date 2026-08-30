@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Bookmark, Pause, Play, Square, Cpu, Mic, MonitorSpeaker, HardDrive, Zap } from "lucide-react";
+import { Bookmark, Pause, Play, Square, Cpu, Mic, MonitorSpeaker, HardDrive, Zap, WifiOff } from "lucide-react";
 import { Button } from "../components/ui";
 import { useMeetingStore } from "../stores/meetingStore";
 import { useUIStore } from "../stores/uiStore";
@@ -31,7 +31,8 @@ export function Meeting() {
   const hydrateFromCurrent = useMeetingStore((s) => s.hydrateFromCurrent);
 
   const [health, setHealth] = useState<HealthResponse | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [busyAction, setBusyAction] = useState<"pause-resume" | "stop" | null>(null);
+  const busy = busyAction !== null;
   const [justMarked, setJustMarked] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
@@ -66,13 +67,14 @@ export function Meeting() {
   if (!meetingId) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 px-8 text-center">
-        <h1 className="text-lg font-semibold text-[var(--color-text)]">Unable to initialize meeting.</h1>
+        <WifiOff size={22} className="text-[var(--color-danger)]" />
+        <h1 className="text-lg font-semibold text-[var(--color-text)]">Unable to initialize meeting</h1>
         <p className="max-w-sm text-sm text-[var(--color-text-muted)]">
           The local MeetNote engine could not be reached.
         </p>
         <div className="mt-2 flex gap-2">
-          <Button variant="primary" onClick={handleRetryConnection} disabled={reconnecting}>
-            {reconnecting ? "Retrying…" : "Retry"}
+          <Button variant="primary" onClick={handleRetryConnection} loading={reconnecting}>
+            Retry
           </Button>
           <Button variant="secondary" onClick={() => navigate({ name: "new-meeting" })}>
             Return to New Meeting
@@ -83,12 +85,12 @@ export function Meeting() {
   }
 
   async function handlePauseResume() {
-    setBusy(true);
+    setBusyAction("pause-resume");
     try {
       if (isRecording) await pauseAction();
       else await resumeAction();
     } finally {
-      setBusy(false);
+      setBusyAction(null);
     }
   }
 
@@ -100,18 +102,18 @@ export function Meeting() {
 
   async function handleStop() {
     if (!meetingId) return;
-    setBusy(true);
+    setBusyAction("stop");
     try {
       await stop();
       navigate({ name: "completion", meetingId });
     } finally {
-      setBusy(false);
+      setBusyAction(null);
     }
   }
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex items-center justify-between border-b border-[var(--color-border)] px-6 py-4">
+      <header className="flex items-center justify-between border-b border-[var(--color-border-subtle)] px-6 py-4">
         <h1 className="text-[15px] font-semibold text-[var(--color-text)]">{title || "Meeting"}</h1>
         <div className="flex items-center gap-4">
           <span className="tabular-nums text-sm text-[var(--color-text-muted)]">
@@ -134,9 +136,9 @@ export function Meeting() {
         </div>
       </header>
 
-      <div className="grid min-h-0 flex-1 grid-cols-[1fr_320px]">
-        <section className="flex min-h-0 flex-col border-r border-[var(--color-border)]">
-          <div className="border-b border-[var(--color-border)] px-6 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-faint)]">
+      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_360px]">
+        <section className="flex min-h-0 flex-col border-r border-[var(--color-border-subtle)]">
+          <div className="border-b border-[var(--color-border-subtle)] px-6 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-faint)]">
             Live Transcript
           </div>
           <div className="flex-1 overflow-y-auto px-6 py-4">
@@ -164,7 +166,7 @@ export function Meeting() {
         </section>
 
         <aside className="flex min-h-0 flex-col">
-          <div className="border-b border-[var(--color-border)] px-5 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-faint)]">
+          <div className="border-b border-[var(--color-border-subtle)] px-5 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-faint)]">
             Meeting Memory
           </div>
           <div className="flex-1 overflow-y-auto px-5 py-4">
@@ -194,7 +196,7 @@ export function Meeting() {
         </aside>
       </div>
 
-      <footer className="border-t border-[var(--color-border)] px-6 py-3">
+      <footer className="border-t border-[var(--color-border-subtle)] px-6 py-3">
         <div className="mb-3 flex flex-wrap items-center gap-x-5 gap-y-1.5 text-xs text-[var(--color-text-muted)]">
           <StatusItem icon={Zap} label={health?.transcription_mode?.device === "cuda" ? "GPU" : "CPU"} ok />
           <StatusItem icon={Cpu} label="Whisper" ok={!!health?.whisper.loaded} />
@@ -203,17 +205,17 @@ export function Meeting() {
           <StatusItem icon={MonitorSpeaker} label="System Audio" ok={!!deviceStatus?.system_audio_connected} />
         </div>
         <div className="flex items-center justify-between">
-          <Button variant="secondary" onClick={handleMarkImportant}>
+          <Button variant="secondary" onClick={handleMarkImportant} disabled={busy}>
             <Bookmark size={16} />
             {justMarked ? "Marked" : "Mark Important"}
           </Button>
           <div className="flex items-center gap-2">
-            <Button variant="secondary" onClick={handlePauseResume} disabled={busy}>
-              {isRecording ? <Pause size={16} /> : <Play size={16} />}
+            <Button variant="secondary" onClick={handlePauseResume} disabled={busy} loading={busyAction === "pause-resume"}>
+              {busyAction !== "pause-resume" && (isRecording ? <Pause size={16} /> : <Play size={16} />)}
               {isRecording ? "Pause" : "Resume"}
             </Button>
-            <Button variant="danger" onClick={handleStop} disabled={busy}>
-              <Square size={16} />
+            <Button variant="danger" onClick={handleStop} disabled={busy} loading={busyAction === "stop"}>
+              {busyAction !== "stop" && <Square size={16} />}
               Stop
             </Button>
           </div>

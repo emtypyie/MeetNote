@@ -59,26 +59,39 @@ def run_ai_pipeline(meeting_id: str, ai_router: AIRouter, broadcast: BroadcastFn
             important_marker_offsets=markers,
             template=template,
         )
+
+        write_markdown(meeting_dir, result.notes_markdown)
+        write_notes_txt(meeting_dir, result.notes_markdown)
+
+        warning_messages = [w.message for w in result.warnings]
+        store.set_notes_result(result.provider_used, "completed", warning_messages)
+        store.set_status("completed")
+        db.upsert_meeting(store.to_summary_row())
+        broadcast(
+            {
+                "type": "notes_ready",
+                "meeting_id": meeting_id,
+                "provider_used": result.provider_used,
+                "warnings": warning_messages,
+            }
+        )
     except NotesGenerationFailed as exc:
         logger.error("AI notes generation failed for %s: %s", meeting_id, exc)
         store.set_notes_result(None, "pending", [str(exc)])
         store.set_status("completed")  # transcript itself is complete; only notes are pending
         db.upsert_meeting(store.to_summary_row())
         broadcast({"type": "notes_failed", "meeting_id": meeting_id, "reason": str(exc)})
-        return
-
-    write_markdown(meeting_dir, result.notes_markdown)
-    write_notes_txt(meeting_dir, result.notes_markdown)
-
-    warning_messages = [w.message for w in result.warnings]
-    store.set_notes_result(result.provider_used, "completed", warning_messages)
-    store.set_status("completed")
-    db.upsert_meeting(store.to_summary_row())
-    broadcast(
-        {
-            "type": "notes_ready",
-            "meeting_id": meeting_id,
-            "provider_used": result.provider_used,
-            "warnings": warning_messages,
-        }
-    )
+    except Exception as exc:  # noqa: BLE001 - deliberate final backstop, see comment below
+        # Anything else (a bug in validation/export, a disk error writing
+        # notes.md, an unexpected response shape from a provider) must still
+        # leave the meeting in a well-defined, retryable state. Without this,
+        # notes_status would stay at whatever it was before this call
+        # ("not_started") forever, the Completion page would poll
+        # indefinitely believing notes are still generating, and no retry
+        # action would ever appear — a silent failure masquerading as
+        # "still working".
+        logger.exception("Unexpected error generating AI notes for %s", meeting_id)
+        store.set_notes_result(None, "failed", [f"Unexpected error: {exc}"])
+        store.set_status("completed")
+        db.upsert_meeting(store.to_summary_row())
+        broadcast({"type": "notes_failed", "meeting_id": meeting_id, "reason": str(exc)})

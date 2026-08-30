@@ -17,7 +17,7 @@ export function formatClockTime(totalSeconds: number): string {
 }
 
 export function formatDuration(totalSeconds: number | null): string {
-  if (totalSeconds == null) return "—";
+  if (totalSeconds == null) return "N/A";
   const s = Math.floor(totalSeconds);
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
@@ -29,16 +29,4 @@ export function formatDate(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
-}
-
-export function formatDateTime(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
 }

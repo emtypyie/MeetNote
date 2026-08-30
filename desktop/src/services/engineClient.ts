@@ -37,8 +37,8 @@ class EngineUnavailableError extends Error {
 
   constructor(cause?: unknown) {
     super(
-      "Could not reach the MeetNote engine. It may still be starting up, or failed to launch " +
-        "— check engine/logs/engine.log.",
+      "Could not reach the MeetNote engine. It may still be starting up, or failed to launch. " +
+        "Check engine/logs/engine.log.",
     );
     this.cause = cause;
   }

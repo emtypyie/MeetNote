@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ArrowRight, Cpu, RefreshCw } from "lucide-react";
+import { Activity, AlertTriangle, ArrowRight, CheckCircle2, ClipboardList, Cpu, Loader2, RefreshCw, Sparkles } from "lucide-react";
 import { Button, Card, HealthRow, SectionLabel, Select } from "../components/ui";
 import { ProviderStatusRow } from "../components/ProviderStatusRow";
 import { engineClient } from "../services/engineClient";
@@ -87,7 +87,7 @@ function getRoutingMessage(ai: AIProviderStatus | null | undefined): string {
   if (gChecking || qChecking) return "Checking...";
   if (gNotConf && qNotConf) return "Unavailable";
   if (!gOk && !qOk) return "Unavailable";
-  if (gOk && qOk) return "Gemini → Groq fallback";
+  if (gOk && qOk) return "Gemini primary, Groq fallback";
   if (gOk && !qOk && !qNotConf) return "Gemini";
   if (!gOk && qOk && !gNotConf) return "Groq";
   if (gOk) return "Gemini";
@@ -150,12 +150,15 @@ export function NewMeeting() {
 
   const restartRequired = !!health?.whisper?.restart_required;
 
-  const canStart = title.trim().length > 0 && 
-                   !starting && 
-                   !restartRequired && 
-                   !health?.whisper.error && 
+  const canStart = title.trim().length > 0 &&
+                   !starting &&
+                   !restartRequired &&
+                   !health?.whisper.error &&
                    health !== null &&
                    !audioMissing;
+
+  const systemReady =
+    !!health && !restartRequired && !health.whisper.error && !health.whisper.loading && !audioMissing;
 
   async function handleStart() {
     setStarting(true);
@@ -170,113 +173,149 @@ export function NewMeeting() {
   }
 
   return (
-    <div className="mx-auto max-w-xl px-8 py-10">
+    <div className="mx-auto max-w-6xl px-10 py-10">
       <h1 className="text-xl font-semibold text-[var(--color-text)]">New Meeting</h1>
       <p className="mt-1 text-sm text-[var(--color-text-muted)]">
         MeetNote checks everything automatically. You don&rsquo;t need to configure anything below.
       </p>
 
-      <Card className="mt-6 p-5">
-        <label className="block text-xs font-medium text-[var(--color-text-muted)]">Meeting title</label>
-        <input
-          autoFocus
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          placeholder="e.g. House Coordination Meeting"
-          className="mt-1.5 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
-        />
-
-        <label className="mt-4 block text-xs font-medium text-[var(--color-text-muted)]">Note template</label>
-        <div className="mt-1.5">
-          <Select
-            value={templateId}
-            onChange={(val) => setTemplateId(val)}
-            options={templates.map((t) => ({ value: t.id, label: t.name }))}
+      <div className="mt-6 grid grid-cols-1 items-start gap-6 lg:grid-cols-[380px_minmax(0,1fr)]">
+        <Card className="p-5">
+          <SectionLabel icon={ClipboardList}>Meeting details</SectionLabel>
+          <label className="block text-xs font-medium text-[var(--color-text-muted)]">Meeting title</label>
+          <input
+            autoFocus
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="e.g. House Coordination Meeting"
+            className="mt-1.5 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-accent)]"
           />
-        </div>
-      </Card>
 
-      <Card className="mt-4 p-5">
-        <SectionLabel>System health</SectionLabel>
-        <HealthRow label="Operating System" ok detail={health?.os} />
-        <HealthRow
-          label="Microphone"
-          ok={!!health?.audio_devices.microphone_ok}
-          detail={health?.audio_devices.microphone_name ?? undefined}
-        />
-        <HealthRow
-          label="System Audio"
-          ok={!!health?.audio_devices.system_audio_ok}
-          detail={health?.audio_devices.system_audio_name ?? undefined}
-        />
-        <HealthRow
-          label="Whisper"
-          ok={!!health?.whisper.loaded}
-          pending={health?.whisper.loading}
-          detail={
-            health?.whisper.loading
-              ? "Loading model…"
-              : health?.whisper.error
-                ? health.whisper.error
-                : health?.transcription_mode?.model_size
-                  ? `${health.transcription_mode.model_size}`
-                  : undefined
-          }
-        />
-        <HealthRow
-          label="GPU / CUDA"
-          ok={!!health?.hardware?.cuda_usable}
-          detail={health?.hardware?.cuda_usable ? health?.hardware?.gpu_name ?? undefined : "CPU mode"}
-        />
-        <HealthRow label="Local Storage" ok={!!health?.storage.ok} />
-        <ProviderStatusRow label="Groq API" provider={health?.ai_providers?.groq} />
-        <ProviderStatusRow label="Gemini API" provider={health?.ai_providers?.gemini} />
-
-        <div className="flex items-center justify-between py-2 border-b border-[var(--color-border)] last:border-b-0">
-          <div className="flex items-center gap-2.5">
-            <span className="text-sm font-medium text-[var(--color-text)]">AI notes</span>
+          <label className="mt-4 block text-xs font-medium text-[var(--color-text-muted)]">Note template</label>
+          <div className="mt-1.5">
+            <Select
+              value={templateId}
+              onChange={(val) => setTemplateId(val)}
+              options={templates.map((t) => ({ value: t.id, label: t.name }))}
+            />
           </div>
-          <div className="text-right text-xs text-[var(--color-text-muted)]">
-            {getRoutingMessage(health?.ai_providers)}
-          </div>
+
+          {health?.transcription_mode && (
+            <div className="mt-5 flex items-center gap-2 rounded-lg bg-[var(--color-surface-2)] px-3 py-2 text-xs text-[var(--color-text-muted)]">
+              <Cpu size={14} className="shrink-0" />
+              <span>
+                Whisper will run in{" "}
+                <span className="font-medium text-[var(--color-text)]">
+                  {health.transcription_mode.device === "cuda" ? "GPU" : "CPU"} mode
+                </span>{" "}
+                ({health.transcription_mode.model_size}, {health.transcription_mode.compute_type})
+              </span>
+            </div>
+          )}
+        </Card>
+
+        <div className="flex flex-col gap-4">
+          <Card className="p-5">
+            <SectionLabel icon={Activity}>System health</SectionLabel>
+
+            <div
+              className={`mb-4 flex items-center gap-2.5 rounded-lg px-3 py-2.5 ${
+                !health
+                  ? "bg-[var(--color-surface-2)]"
+                  : systemReady
+                    ? "bg-[var(--color-success-soft)]"
+                    : "bg-[var(--color-warning-soft)]"
+              }`}
+            >
+              {!health ? (
+                <Loader2 size={16} className="animate-spin text-[var(--color-text-faint)]" />
+              ) : systemReady ? (
+                <CheckCircle2 size={16} className="text-[var(--color-success)]" />
+              ) : (
+                <AlertTriangle size={16} className="text-[var(--color-warning)]" />
+              )}
+              <span
+                className={`text-sm font-semibold ${
+                  !health ? "text-[var(--color-text-muted)]" : systemReady ? "text-[var(--color-success)]" : "text-[var(--color-warning)]"
+                }`}
+              >
+                {!health ? "Checking system…" : systemReady ? "Ready to record" : "Not ready yet"}
+              </span>
+            </div>
+
+            <HealthRow label="Operating System" ok detail={health?.os} />
+            <HealthRow
+              label="Microphone"
+              ok={!!health?.audio_devices.microphone_ok}
+              detail={health?.audio_devices.microphone_name ?? undefined}
+            />
+            <HealthRow
+              label="System Audio"
+              ok={!!health?.audio_devices.system_audio_ok}
+              detail={health?.audio_devices.system_audio_name ?? undefined}
+            />
+            <HealthRow
+              label="Whisper"
+              ok={!!health?.whisper.loaded}
+              pending={health?.whisper.loading}
+              detail={
+                health?.whisper.loading
+                  ? "Loading model…"
+                  : health?.whisper.error
+                    ? health.whisper.error
+                    : health?.transcription_mode?.model_size
+                      ? `${health.transcription_mode.model_size}`
+                      : undefined
+              }
+            />
+            <HealthRow
+              label="GPU / CUDA"
+              ok={!!health?.hardware?.cuda_usable}
+              detail={health?.hardware?.cuda_usable ? health?.hardware?.gpu_name ?? undefined : "CPU mode"}
+            />
+            <HealthRow label="Local Storage" ok={!!health?.storage.ok} />
+          </Card>
+
+          <Card className="p-5">
+            <SectionLabel icon={Sparkles}>AI providers</SectionLabel>
+            <ProviderStatusRow label="Gemini" provider={health?.ai_providers?.gemini} />
+            <ProviderStatusRow label="Groq" provider={health?.ai_providers?.groq} />
+
+            <div className="flex items-center justify-between py-2 border-b border-[var(--color-border)] last:border-b-0">
+              <span className="text-sm font-medium text-[var(--color-text)]">AI notes</span>
+              <span className="text-right text-xs text-[var(--color-text-muted)]">
+                {getRoutingMessage(health?.ai_providers)}
+              </span>
+            </div>
+
+            <p className="mt-3 text-xs text-[var(--color-text-faint)] leading-relaxed">
+              {getAiStatusMessage(health?.ai_providers)}
+            </p>
+          </Card>
+
+          {error && <p className="text-sm text-[var(--color-danger)]">{error}</p>}
+
+          {restartRequired ? (
+            <div className="flex flex-col items-end gap-3 rounded-lg bg-[var(--color-warning-soft)] p-4">
+              <span className="flex items-center gap-2 text-sm font-medium text-[var(--color-warning)]">
+                <AlertTriangle size={15} className="shrink-0" />
+                Restart required before starting a meeting.
+              </span>
+              <Button variant="primary" onClick={() => invoke("restart_app")}>
+                <RefreshCw size={16} />
+                Restart Now
+              </Button>
+            </div>
+          ) : (
+            <div className="flex justify-end">
+              <Button variant="primary" disabled={!canStart} loading={starting} onClick={handleStart}>
+                {btnText}
+                {!starting && <ArrowRight size={16} />}
+              </Button>
+            </div>
+          )}
         </div>
-
-        {health?.transcription_mode && (
-          <div className="mt-3 flex items-center gap-2 rounded-lg bg-[var(--color-surface-2)] px-3 py-2 text-xs text-[var(--color-text-muted)]">
-            <Cpu size={14} />
-            Whisper will run in{" "}
-            <span className="font-medium text-[var(--color-text)]">
-              {health.transcription_mode.device === "cuda" ? "GPU" : "CPU"} mode
-            </span>{" "}
-            ({health.transcription_mode.model_size}, {health.transcription_mode.compute_type})
-          </div>
-        )}
-
-        <p className="mt-3 text-xs text-[var(--color-text-faint)] leading-relaxed">
-          {getAiStatusMessage(health?.ai_providers)}
-        </p>
-      </Card>
-
-      {error && <p className="mt-3 text-sm text-[var(--color-danger)]">{error}</p>}
-
-      {restartRequired ? (
-        <div className="mt-6 flex flex-col items-end gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-4">
-          <span className="text-sm font-medium text-amber-500">
-            Restart required before starting a meeting.
-          </span>
-          <Button variant="primary" onClick={() => invoke("restart_app")}>
-            <RefreshCw size={16} className="mr-2" />
-            Restart Now
-          </Button>
-        </div>
-      ) : (
-        <div className="mt-6 flex justify-end">
-          <Button variant="primary" disabled={!canStart} onClick={handleStart}>
-            {btnText}
-            <ArrowRight size={16} />
-          </Button>
-        </div>
-      )}
+      </div>
     </div>
   );
 }

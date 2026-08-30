@@ -15,7 +15,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import shutil
+import stat
 import threading
 import uuid
 from contextlib import asynccontextmanager
@@ -33,7 +35,7 @@ configure_cuda_dll_search_path()  # must run before any GPU-touching import belo
 
 from ai_pipeline import run_ai_pipeline
 from audio.factory import AudioCaptureFactory, UnsupportedPlatformError
-from audio.health import probe_devices
+from audio.health import AudioHealthMonitor, DeviceProbeResult
 from hardware.detector import detect_hardware
 from hardware.model_selector import select_transcription_mode
 from intelligence import templates as templates_module
@@ -99,6 +101,7 @@ class EngineState:
         self.ws_hub = WSHub()
         self.session_lock = threading.Lock()
         self.active_hardware_preference: str = "automatic"
+        self.audio_health: Optional[AudioHealthMonitor] = None
 
     def broadcast(self, message: dict) -> None:
         self.ws_hub.broadcast(message)
@@ -168,10 +171,14 @@ async def lifespan(app: FastAPI):
     else:
         threading.Thread(target=_load_whisper_in_background, daemon=True, name="whisper-load").start()
 
+    # storage.config.load_config() always deep-merges onto DEFAULT_CONFIG, so
+    # ai_cfg["gemini_model"]/["groq_model"] are guaranteed present — no
+    # fallback literal needed here (one that drifted from config.py's actual
+    # default previously sat here unreachable).
     ai_cfg = engine_state.config["ai"]
     engine_state.ai_router = AIRouter(
-        gemini=GeminiProvider(model=ai_cfg.get("gemini_model", "gemini-1.5-flash-latest")),
-        groq=GroqProvider(model=ai_cfg.get("groq_model", "llama3-8b-8192")),
+        gemini=GeminiProvider(model=ai_cfg["gemini_model"]),
+        groq=GroqProvider(model=ai_cfg["groq_model"]),
     )
     # A live connectivity check (not just "is a key present") runs in the
     # background so a wrong/expired key surfaces as such in the UI instead
@@ -186,11 +193,22 @@ async def lifespan(app: FastAPI):
         name="ai-connectivity-check",
     ).start()
 
+    # One dedicated background thread owns all microphone/system-audio
+    # health probing for the engine's lifetime — see audio/health.py's
+    # module docstring for why this must be a single persistent thread
+    # (COM apartment-threading) rather than probing inline on whichever
+    # FastAPI request thread happens to handle /health. Skips probing
+    # entirely while a meeting is active; see health() below.
+    engine_state.audio_health = AudioHealthMonitor()
+    engine_state.audio_health.start(is_meeting_active=lambda: _is_actively_recording())
+
     engine_state.ws_hub.bind_loop(asyncio.get_running_loop())
 
     yield
 
     logger.info("MeetNote engine shutting down")
+    if engine_state.audio_health is not None:
+        engine_state.audio_health.stop()
     if engine_state.active_session is not None:
         try:
             engine_state.active_session.audio_capture.stop()
@@ -244,9 +262,52 @@ def _storage_health() -> dict:
 # ---------------------------------------------------------------------------
 
 
+def _is_actively_recording() -> bool:
+    """True only while a MeetingSession's audio capture is genuinely
+    holding the microphone/system-audio devices open right now — not just
+    while a MeetingSession object happens to exist.
+
+    `pause()` releases both devices immediately (see session.py: "release
+    devices; resumed cleanly below"), and after `stop()` the session can
+    stay set for a few more seconds while AI notes are generated with no
+    capture running at all. In both cases the real devices are free again,
+    so the independent background monitor should be the source of truth —
+    not `device_status()`, which would otherwise report whatever
+    connected/disconnected state happened to be true the instant capture
+    was last stopped, frozen and increasingly stale for as long as that
+    lasts. `resume()` transitions PAUSED -> RESUMED -> RECORDING within one
+    synchronous call, so RESUMED is never an externally observable settled
+    state and doesn't need handling here.
+    """
+    session = engine_state.active_session
+    return session is not None and session.state.state == MeetingState.RECORDING
+
+
+def _current_device_probe() -> DeviceProbeResult:
+    if _is_actively_recording():
+        # A live recorder already has the microphone/system-audio streams
+        # open for real — that is the ground truth. Asking the independent
+        # background prober to also open them here would be exactly the
+        # competing-recorder contention this design avoids (see
+        # audio/health.py and session.py's device_status()).
+        live = engine_state.active_session.device_status()
+        return DeviceProbeResult(
+            microphone_ok=live["microphone_connected"],
+            microphone_name=live["microphone_name"],
+            system_audio_ok=live["system_audio_connected"],
+            system_audio_name=live["system_audio_name"],
+            error=live["last_error"],
+        )
+    if engine_state.audio_health is not None:
+        return engine_state.audio_health.current_status()
+    # Only reachable in the brief window before lifespan() has finished
+    # starting the monitor.
+    return DeviceProbeResult(False, None, False, None, error="Audio health monitor not started yet")
+
+
 @app.get("/health")
 def health():
-    device_probe = probe_devices()
+    device_probe = _current_device_probe()
     storage_ok = _storage_health()
     router_status = engine_state.ai_router.status() if engine_state.ai_router else None
 
@@ -291,13 +352,26 @@ async def recheck_ai_providers():
     return engine_state.ai_router.status()
 
 
+def _config_response() -> dict:
+    # Always reflect the actual effective storage root and meetings
+    # directory (even when the user never explicitly overrode the storage
+    # location via /config) — this is the one authoritative source for both
+    # paths, used by every endpoint that returns config so the frontend
+    # never sees one response with these fields and another without them.
+    # The frontend never guesses or reconstructs them; it just asks the
+    # native layer to open whatever path is returned here. Both are
+    # guaranteed to exist: ensure_dirs() creates meetings_root() at startup
+    # (see lifespan()), before a single meeting has ever been recorded.
+    return {
+        **engine_state.config,
+        "storage_root": str(storage_root()),
+        "meetings_root": str(meetings_root()),
+    }
+
+
 @app.get("/config")
 def get_config():
-    # Always reflect the actual effective storage root (even when the user
-    # never explicitly overrode it via /config), so the frontend's "Open
-    # meetings directory" buttons always have a real path to open rather
-    # than silently doing nothing.
-    return {**engine_state.config, "storage_root": str(storage_root())}
+    return _config_response()
 
 
 @app.post("/config")
@@ -309,8 +383,15 @@ def patch_config(patch: dict):
     engine_state.config = save_config(patch)
     if "storage_root" in patch and patch["storage_root"]:
         set_storage_root(Path(patch["storage_root"]))
-    
-    return engine_state.config
+
+    # Same shape as GET /config — see _config_response(); previously this
+    # returned engine_state.config directly, silently dropping
+    # storage_root/meetings_root from the frontend's state after the very
+    # first settings change on a page (any save() call), which broke the
+    # "Open" buttons even independently of the Tauri permission-scope bug
+    # (config.storage_root becoming undefined short-circuits the click
+    # handler before openPath is ever called, with no error either way).
+    return _config_response()
 
 
 # ---------------------------------------------------------------------------
@@ -373,40 +454,101 @@ def get_meeting_detail(meeting_id: str):
     }
 
 
+# Statuses during which a live MeetingSession or the background AI-pipeline
+# task may still be reading/writing this meeting's directory. Deletion must
+# refuse all of these, not just "recording"/"paused" — deleting mid-
+# "finalizing"/"generating_notes" would race shutil.rmtree against
+# ai_pipeline.run_ai_pipeline writing notes.md/notes.txt into the same
+# directory. Only "completed" and "error" (the two terminal statuses —
+# "error" covers both a genuine failure and a recovery-abandoned meeting,
+# see /meetings/{id}/abandon) are safe to delete.
+_ACTIVE_MEETING_STATUSES = {"preparing", "recording", "paused", "finalizing", "generating_notes"}
+
+
+def _purge_meeting_directory(meeting_dir: Path) -> list[str]:
+    """Delete `meeting_dir` and everything under it, returning a list of
+    human-readable errors for anything that could NOT be removed.
+
+    An empty return value is the only condition under which the caller may
+    treat the directory as gone. Unlike a bare `shutil.rmtree(..., onerror=...)`
+    that swallows every failure, this collects them so the API never reports
+    a meeting as deleted while its files are still sitting on disk.
+    """
+    errors: list[str] = []
+
+    def _onerror(func, path, exc_info) -> None:
+        """shutil.rmtree onerror hook: retry once after clearing the
+        read-only attribute (the common Windows case — a note file still
+        marked read-only by an editor or sync tool); record real failures
+        (e.g. a file genuinely locked by another process) instead of
+        silently continuing as if nothing happened."""
+        exc = exc_info[1]
+        try:
+            os.chmod(path, stat.S_IWRITE)
+            func(path)
+        except OSError as retry_exc:
+            logger.error("Could not remove %s while deleting meeting directory: %s", path, retry_exc)
+            errors.append(f"{path}: {retry_exc}")
+        else:
+            logger.info("Removed read-only path during meeting deletion: %s (original error: %s)", path, exc)
+
+    shutil.rmtree(meeting_dir, onerror=_onerror)
+
+    if meeting_dir.exists():
+        # Defensive: shutil.rmtree can leave the top-level directory itself
+        # behind (e.g. it was the one entry onerror couldn't clear) without
+        # necessarily having appended to `errors` for that exact path.
+        errors.append(f"{meeting_dir}: directory still present after deletion attempt")
+
+    return errors
+
+
 @app.delete("/meetings/{meeting_id}")
 def delete_meeting(meeting_id: str):
     row = db.get_meeting(meeting_id)
     if row is None:
         raise HTTPException(404, "Meeting not found")
 
-    if row["status"] in ("recording", "paused"):
-        raise HTTPException(400, "Cannot delete an active meeting")
+    if row["status"] in _ACTIVE_MEETING_STATUSES:
+        raise HTTPException(400, "Cannot delete a meeting while it is still active or being processed")
 
     meeting_dir = Path(row["meeting_dir"]).resolve()
     base_dir = meetings_root().resolve()
 
-    if not str(meeting_dir).startswith(str(base_dir)):
+    # Path-traversal containment: the meeting directory must genuinely live
+    # inside the meetings root. is_relative_to() compares path components,
+    # not a raw string prefix — a sibling directory like
+    # "<meetings_root>_backup" would incorrectly pass a `str.startswith()`
+    # check but correctly fails this one.
+    if meeting_dir == base_dir or not meeting_dir.is_relative_to(base_dir):
+        logger.error("Refusing to delete meeting %s: %s is not inside %s", meeting_id, meeting_dir, base_dir)
+        raise HTTPException(400, "Invalid meeting path")
+
+    if meeting_dir.is_symlink():
+        # The app never creates meeting directories as symlinks (see
+        # storage/paths.py:new_meeting_dir) — a symlink here means the
+        # filesystem entry was tampered with or replaced out of band. Refuse
+        # rather than following it into shutil.rmtree.
+        logger.error("Refusing to delete meeting %s: %s is a symlink", meeting_id, meeting_dir)
         raise HTTPException(400, "Invalid meeting path")
 
     if meeting_dir.exists() and meeting_dir.is_dir():
-        import stat as _stat
-
-        def _remove_readonly(func, path, exc_info):
-            """onerror handler: clear read-only flag and retry, else log and continue."""
-            try:
-                os.chmod(path, _stat.S_IWRITE)
-                func(path)
-            except Exception:
-                # File may be locked by another process (e.g. a note file still open).
-                # Skip it — leftover files will be cleaned up on next OS reboot or
-                # when the lock is released.
-                pass
-
-        shutil.rmtree(meeting_dir, onerror=_remove_readonly)
+        errors = _purge_meeting_directory(meeting_dir)
+        if errors:
+            # No silent success: the database record is deliberately left in
+            # place so the meeting still shows up (and deletion can be
+            # retried) rather than the app losing track of files that are
+            # demonstrably still on disk.
+            logger.error("Meeting %s could not be fully deleted: %s", meeting_id, "; ".join(errors))
+            raise HTTPException(
+                500,
+                "Could not fully delete this meeting: some files could not be removed "
+                "(they may be open in another program). The meeting has not been removed "
+                "— close any application using its files and try again.",
+            )
 
     db.delete_meeting(meeting_id)
 
-    global engine_state
     if engine_state.active_session and engine_state.active_session.meeting_id == meeting_id:
         engine_state.active_session = None
 
@@ -510,9 +652,13 @@ def start_meeting(body: StartMeetingBody):
             detail = engine_state.whisper_load_error or "Whisper model failed to load."
             raise HTTPException(503, detail)
 
-        # Check audio devices explicitly so we can return a clear error if both are broken.
-        from audio.health import probe_devices
-        devices = probe_devices()
+        # Check audio devices explicitly so we can return a clear error if
+        # both are broken. Reuses the same cached health status /health
+        # reports (no active session exists yet at this point, so this is
+        # the background monitor's cache, not a fresh probe) — starting a
+        # meeting must never itself open a competing probe stream right
+        # before opening the real recording stream.
+        devices = _current_device_probe()
         if not devices.microphone_ok and not devices.system_audio_ok:
             raise HTTPException(503, "Meeting start rejected: No audio devices available (neither microphone nor system audio).")
 

@@ -1,17 +1,37 @@
 @import "tailwindcss";
 
+/* Design tokens. One system, applied everywhere via CSS variables rather
+ * than raw Tailwind palette classes inside components (no `text-red-500`,
+ * no `bg-amber-500` scattered around) — see components/ui.tsx for the
+ * primitives built on top of these.
+ *
+ * Surface ladder (each step is a touch lighter than the last, so depth
+ * reads from elevation and contrast rather than borders alone):
+ *   bg           the application background, behind everything
+ *   surface-1    base card / nav-rail surface, one step above bg
+ *   surface-2    input fields, nested rows, hover backgrounds
+ *   surface-3    popovers, dropdown menus, modal surfaces
+ *
+ * Text ladder (four levels, most to least prominent):
+ *   text            primary content, headings, values
+ *   text-secondary  section labels, emphasized secondary content
+ *   text-muted      supporting text, field labels, detail values
+ *   text-faint      timestamps, disabled/quiet helper text
+ */
 @theme {
   --font-sans:
     "Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, "Inter", sans-serif;
 
-  --color-bg: #0b0b0e;
+  --color-bg: #0a0a0d;
   --color-surface-1: #131317;
   --color-surface-2: #1a1a20;
   --color-surface-3: #212129;
   --color-border: #2a2a33;
+  --color-border-subtle: #202027;
   --color-border-strong: #383842;
 
   --color-text: #edeef2;
+  --color-text-secondary: #c7c7d1;
   --color-text-muted: #9797a3;
   --color-text-faint: #64646f;
 
@@ -19,11 +39,22 @@
   --color-accent-hover: #7375f3;
   --color-accent-soft: #6366f11a;
 
+  --color-info: #38bdf8;
+  --color-info-soft: #38bdf81a;
   --color-success: #34d399;
+  --color-success-soft: #34d3991a;
   --color-warning: #f2b93d;
+  --color-warning-soft: #f2b93d1a;
   --color-danger: #f0575d;
   --color-danger-soft: #f0575d1a;
   --color-record: #ef4444;
+
+  /* Soft elevation — used sparingly (popovers, modals, hover lift), never
+   * as a decorative glow. Dark surfaces need a touch of ambient light too,
+   * not just a black drop shadow, or elevation reads as murky. */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.24);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.32), 0 0 0 1px rgba(255, 255, 255, 0.03);
+  --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.44), 0 0 0 1px rgba(255, 255, 255, 0.04);
 }
 
 html,
@@ -79,4 +110,53 @@ select {
 
 .animate-record-pulse {
   animation: pulse-dot 1.6s ease-in-out infinite;
+}
+
+/* Keyboard focus must always be visible (accessibility) — this is the one
+ * ring style used everywhere (buttons, inputs, the custom Select, nav
+ * items, cards acting as buttons) instead of each component inventing its
+ * own. Mouse/touch users never see it: :focus-visible only engages for
+ * keyboard/programmatic focus. */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@keyframes fade-scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.animate-modal-in {
+  animation: fade-scale-in 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.animate-overlay-in {
+  animation: fade-in 150ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
 }

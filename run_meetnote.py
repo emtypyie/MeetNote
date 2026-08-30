@@ -440,7 +440,6 @@ class EngineManager:
         return self.process.poll() if self.process else None
 
     def wait_until_ready(self, timeout: float = READY_TIMEOUT_SECONDS) -> bool:
-        import sys
         deadline = time.monotonic() + timeout
         logger.info("Waiting for engine health endpoint (%s)...", ENGINE_HEALTH_URL)
         consecutive_valid_checks = 0
@@ -529,7 +528,6 @@ class EngineManager:
         )
 
     def _wait_briefly_for_whisper(self) -> None:
-        import sys
         """Best-effort only: log when Whisper finishes loading if it happens
         quickly. Never blocks desktop startup on this — a slow CPU load is
         not a failure (see module docstring / product spec section 9)."""

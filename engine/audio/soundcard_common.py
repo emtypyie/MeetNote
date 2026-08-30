@@ -137,11 +137,24 @@ class _SoundcardAudioCapture(AudioCapture):
 
     # -- internals ----------------------------------------------------------
 
-    def _resolve_source(self, source_kind: str):
+    def _resolve_source(self, sc, source_kind: str):
+        """Resolve the actual `soundcard` device for `source_kind`.
+
+        Takes the `soundcard` module as an explicit parameter (rather than
+        reading `self._sc`, which is only ever set by `start()`) so this same
+        resolution logic — including the Linux pactl fallback in the
+        `LinuxAudioCapture` override — can also be reused by
+        `audio/health.py`'s background probe, which never calls `start()` at
+        all. Without this, health-check probing and real recording could
+        silently disagree about how to find the system-audio device on a
+        given machine, which is exactly the kind of inconsistency that would
+        make Linux's health status untrustworthy relative to what actually
+        happens when a meeting starts.
+        """
         if source_kind == "microphone":
-            return self._sc.default_microphone()
-        speaker = self._sc.default_speaker()
-        return self._sc.get_microphone(id=str(speaker.id), include_loopback=True)
+            return sc.default_microphone()
+        speaker = sc.default_speaker()
+        return sc.get_microphone(id=str(speaker.id), include_loopback=True)
 
     def _set_connected(self, source_kind: str, connected: bool, name: Optional[str], error: Optional[str] = None):
         state = self._mic_state if source_kind == "microphone" else self._sys_state
@@ -156,7 +169,7 @@ class _SoundcardAudioCapture(AudioCapture):
         backoff = 1.0
         while not self._stop_event.is_set():
             try:
-                device = self._resolve_source(source_kind)
+                device = self._resolve_source(self._sc, source_kind)
                 with device.recorder(samplerate=SAMPLE_RATE, channels=1, blocksize=BLOCK_SIZE) as rec:
                     self._set_connected(source_kind, True, device.name)
                     backoff = 1.0

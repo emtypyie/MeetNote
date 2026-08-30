@@ -28,9 +28,9 @@ logger = logging.getLogger("meetnote.audio.linux")
 
 
 class LinuxAudioCapture(_SoundcardAudioCapture):
-    def _resolve_source(self, source_kind: str):
+    def _resolve_source(self, sc, source_kind: str):
         try:
-            return super()._resolve_source(source_kind)
+            return super()._resolve_source(sc, source_kind)
         except Exception as exc:
             if source_kind != "system_audio":
                 raise
@@ -39,16 +39,19 @@ class LinuxAudioCapture(_SoundcardAudioCapture):
                 "attempting pactl monitor-source fallback",
                 exc,
             )
-            return self._resolve_via_pactl()
+            return self._resolve_via_pactl(sc)
 
-    def _resolve_via_pactl(self):
+    def _resolve_via_pactl(self, sc):
         """Ask pactl directly for the monitor source of the default sink.
 
-        NOT covered by any test in this session (requires a real Linux
-        audio server) — implemented defensively so a soundcard quirk on an
-        unusual PipeWire config degrades to a clear error instead of a
-        silent hang, per the product spec's requirement to implement
-        detection + graceful fallback rather than assume a device exists.
+        NOT covered by any test in this session that touches real pactl
+        output (requires a real Linux audio server) — implemented
+        defensively so a soundcard quirk on an unusual PipeWire config
+        degrades to a clear error instead of a silent hang, per the product
+        spec's requirement to implement detection + graceful fallback rather
+        than assume a device exists. `sc` is passed in explicitly (see
+        soundcard_common._resolve_source) so this same fallback also covers
+        the health-check probe, not just real recording.
         """
         try:
             default_sink = subprocess.check_output(
@@ -61,7 +64,7 @@ class LinuxAudioCapture(_SoundcardAudioCapture):
             if monitor_name not in sources:
                 raise RuntimeError(f"pactl reports no monitor source named {monitor_name!r}")
             # soundcard can open a source by its Pulse name directly.
-            return self._sc.get_microphone(id=monitor_name)
+            return sc.get_microphone(id=monitor_name)
         except FileNotFoundError as exc:
             raise RuntimeError(
                 "pactl not found — install pulseaudio-utils (or the PipeWire "
