@@ -92,17 +92,6 @@ def get_meeting(meeting_id: str) -> Optional[dict]:
     return dict(row) if row else None
 
 
-def unfinished_meetings() -> list[dict]:
-    terminal = ("completed",)
-    with _connect() as conn:
-        rows = conn.execute(
-            f"SELECT * FROM meetings WHERE status NOT IN ({','.join('?' * len(terminal))}) "
-            "ORDER BY started_at DESC",
-            terminal,
-        ).fetchall()
-    return [dict(r) for r in rows if Path(r["meeting_dir"]).exists()]
-
-
 def delete_meeting(meeting_id: str) -> None:
     with _connect() as conn:
         conn.execute("DELETE FROM meetings WHERE meeting_id = ?", (meeting_id,))

@@ -10,6 +10,7 @@ feeds hardware/model_selector.py.
 from __future__ import annotations
 
 import logging
+import sys
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -61,6 +62,20 @@ def _cpu_model_name() -> str:
             return name
     except Exception:  # pragma: no cover - defensive
         pass
+
+    # platform.processor() reliably returns "" on most Linux distros
+    # (it shells out to `uname -p`, which many distros don't populate) even
+    # though the health panel is expected to show a real CPU name there too
+    # — /proc/cpuinfo's "model name" field is what actually has it.
+    if sys.platform.startswith("linux"):
+        try:
+            with open("/proc/cpuinfo", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    if line.lower().startswith("model name"):
+                        return line.split(":", 1)[1].strip()
+        except OSError:
+            pass
+
     return "Unknown CPU"
 
 
