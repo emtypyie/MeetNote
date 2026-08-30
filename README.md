@@ -1,222 +1,130 @@
 # MeetNote
 
-MeetNote is a desktop meeting assistant that privately captures your meeting audio, transcribes it locally, and generates structured meeting notes using AI. 
+MeetNote is a desktop meeting assistant that records your meeting audio, transcribes it locally, and generates structured meeting notes using AI.
 
-Transcription happens entirely locally on your device, ensuring your raw meeting audio never leaves your machine. After the meeting, only the transcript text is sent to an AI provider of your choice to generate the final notes.
+Transcription runs entirely on your machine, so your raw audio never leaves your device. After the meeting, only the transcript text is sent to an AI provider of your choice to generate the final notes.
 
-## Features
+## What MeetNote Does
 
-- Local speech transcription using faster-whisper
-- Microphone audio capture
-- System audio capture
-- Automatic language detection
-- Translation of supported non-English speech into English
-- Automatic transcription hardware selection
-- NVIDIA GPU transcription
-- CPU-only transcription
-- Restart-required hardware switching
-- Crash-safe transcript persistence
-- Gemini AI meeting notes
-- Groq AI meeting notes
-- Gemini-only provider configuration
-- Groq-only provider configuration
-- Gemini primary with Groq fallback when both are configured
-- Copy Summary
-- Open Notes
-- Meeting history
-- Meeting deletion
-- Automatic .env creation through setup.py
-- Interactive API-key configuration through setup.py
-
-## Privacy
-
-Meeting audio is processed locally, and transcription is performed entirely on your machine. Meeting data is stored locally. Only the transcript text required for AI note generation is sent to the configured AI provider. Runtime and user meeting data is excluded from Git.
+- Records microphone and system (speaker/output) audio at the same time
+- Transcribes speech locally using faster-whisper (no audio sent to any server)
+- Detects the spoken language automatically and translates non-English speech into English
+- Uses your NVIDIA GPU when available, or runs on CPU
+- Generates meeting notes with Gemini and/or Groq
+- Saves meetings locally with crash-safe transcript persistence and recovery after a restart
+- Lets you copy the summary, open the notes file, and delete meetings you no longer need
 
 ## Requirements
 
-- Python 3.10–3.12 (Python 3.13+ is currently incompatible due to native dependency issues)
-- Node.js 18+
-- Rust and Tauri platform build tools
-- Supported operating systems: Windows (Linux support is experimental)
-- NVIDIA GPU is optional but recommended
+- Python 3.10-3.12 (3.13+ is not currently supported)
+- Node.js 18+ and npm
+- Rust and Cargo (for building the desktop app)
+- An NVIDIA GPU is optional but speeds up transcription
+
+**Windows**: no extra system packages are needed.
+
+**Ubuntu/Linux (22.04+)**: install the Tauri and audio system packages before running setup:
+
+```bash
+sudo apt update && sudo apt install -y \
+    libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+    librsvg2-dev build-essential curl wget file libssl-dev \
+    pulseaudio-utils
+```
+
+MeetNote uses your system's PulseAudio or PipeWire (via its PulseAudio compatibility layer) for microphone and system-audio capture, so one of the two needs to be running, which is the default on Ubuntu 22.04 and 24.04.
 
 ## Setup
 
-### Windows
-
-The canonical setup command is:
-
-```cmd
+```bash
+git clone <repository-url>
+cd MeetNote
 python setup.py
 ```
 
-If you have multiple Python versions installed, you can explicitly select an interpreter (e.g., Python 3.12):
+`setup.py` prepares everything: it creates the Python environment, installs the correct CPU or GPU dependencies for your hardware, installs frontend dependencies, builds the desktop application, asks for your optional Gemini/Groq API keys, and writes `engine/.env` for you. You do not need to create or edit `.env` by hand.
 
-```cmd
-py -3.12 setup.py
-```
+Re-run `python setup.py` any time to update MeetNote after pulling new changes; it will not overwrite your existing settings or API keys.
 
-This script prepares the environment, detects available hardware, installs appropriate CPU/GPU dependencies, creates `engine/.env` automatically, and asks for missing AI provider keys.
-
-### Linux (Ubuntu/Debian)
-
-Linux support is currently experimental. Before running the setup script, you must install the OS-level dependencies for audio capture and the Tauri desktop framework:
+## Run
 
 ```bash
-sudo apt-get update
-sudo apt-get install -y python3-venv portaudio19-dev pulseaudio-utils \
-    libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf \
-    build-essential curl wget file libssl-dev libgtk-3-dev \
-    libayatana-appindicator3-dev
-```
-
-Then, run the canonical setup script:
-
-```bash
-python3 setup.py
-```
-
-If `python3` defaults to an unsupported version, you can explicitly use a supported one (e.g., Python 3.10):
-
-```bash
-python3.10 setup.py
-```
-
-*(See `docs/LINUX_TESTING.md` for more details on the experimental Linux implementation.)*
-
-## Updating MeetNote
-
-To get the latest version of MeetNote, simply pull the latest changes from GitHub and re-run the setup script. The setup script will safely update your dependencies and recompile the desktop application without overwriting your existing settings or `.env` file.
-
-```bash
-git pull
-python setup.py
-```
-
-## AI Provider Setup
-
-MeetNote supports Gemini and Groq for generating notes. The supported configurations are:
-
-- Gemini only -> Gemini
-- Groq only -> Groq
-- Both -> Gemini primary, Groq fallback
-- Neither -> local recording and transcription still work, but AI notes are unavailable
-
-At least one provider key is needed for AI-generated notes. The `setup.py` script asks for the missing API keys interactively. Existing configured keys will not be requested again.
-
-### Getting API Keys
-
-If you don't have API keys yet, you can get them for free:
-- **Gemini**: Go to [Google AI Studio](https://aistudio.google.com/app/apikey), sign in with your Google account, and click "Create API key".
-- **Groq**: Go to the [Groq Console](https://console.groq.com/keys), sign in, and click "Create API Key".
-
-## Running MeetNote
-
-The root launchers start the MeetNote engine and desktop application together. 
-
-**Windows**:
-```cmd
 python run_meetnote.py
 ```
-or:
-```cmd
-run_meetnote.bat
-```
 
-**Linux**:
-```bash
-python3 run_meetnote.py
-```
-or:
-```bash
-./run_meetnote.sh
-```
+On Windows you can also double-click `run_meetnote.bat`. On Linux you can also run `./run_meetnote.sh`. Both are thin wrappers around `run_meetnote.py`, which starts the engine, waits until it is ready, then opens the desktop application, and shuts everything down cleanly when you close the window.
 
-## Hardware
+## AI Providers
 
-MeetNote supports different hardware modes for local transcription:
+- Gemini only: notes are generated with Gemini
+- Groq only: notes are generated with Groq
+- Both configured: Gemini is used first, Groq is used automatically if a request to Gemini fails
+- Neither configured: recording, transcription, and local storage still work; AI notes are simply unavailable until a key is added
 
-- **Automatic**: Uses the best supported transcription hardware available on the system.
-- **NVIDIA GPU**: Uses NVIDIA/CUDA acceleration when available.
-- **CPU only**: Forces transcription to run on the CPU, even if an NVIDIA GPU is available.
+Get a free API key from [Google AI Studio](https://aistudio.google.com/app/apikey) (Gemini) or the [Groq Console](https://console.groq.com/keys) (Groq).
 
-Changing the transcription hardware requires restarting MeetNote.
+## CPU / GPU
 
-## Language and Translation
+- **Automatic**: uses your NVIDIA GPU if one is usable, otherwise CPU
+- **NVIDIA GPU**: requires a usable GPU; does not silently fall back to CPU
+- **CPU only**: always runs on CPU, even if a GPU is present
 
-English speech is transcribed as English. Supported non-English speech can be translated into English locally. The English transcript is then used for AI meeting notes.
+Changing the hardware mode in Settings requires restarting MeetNote for it to take effect.
 
-## Local Data
+## Language
 
-Meeting-related data is stored locally (typically in `~/MeetNote/`). 
+English speech is transcribed as English. Speech in other supported languages is translated into English before it reaches the transcript, so meeting notes are always generated from an English transcript regardless of the language spoken.
 
-This includes transcripts, summaries, meeting metadata, recordings, runtime data, and logs. User and runtime data is intentionally excluded from Git. Deleting a meeting removes its associated local meeting data.
+## Data and Privacy
+
+- Recordings, transcripts, and notes stay on your machine, under `~/MeetNote/` by default (configurable in Settings)
+- API keys live only in `engine/.env` on your machine and are never committed to Git
+- Meeting data, logs, and the local database are excluded from Git by `.gitignore`
+- Deleting a meeting removes all of its local data
 
 ## Troubleshooting
 
-### 'npm' is not recognized as an internal or external command
-This means Node.js is not installed on your system. `npm` (Node Package Manager) is required to run the frontend portion of MeetNote. To fix this, download and install Node.js from [nodejs.org](https://nodejs.org/). Make sure to keep the option to "Add to PATH" checked during installation.
+**Setup failed**: re-read the error printed by `setup.py`; it names the specific missing tool (Python, Node, Rust, or a Linux system package) and how to install it.
 
-### MeetNote does not start
-Run `python setup.py` and then try the canonical launcher again.
+**Python version issue**: MeetNote needs Python 3.10, 3.11, or 3.12. `setup.py` looks for a compatible interpreter automatically; if none is found, install one from [python.org](https://www.python.org/) (Windows) or your distribution's package manager (Linux).
 
-### AI notes are unavailable
-Make sure at least one AI provider API key is configured. Run `python setup.py` again if required.
+**Engine won't start**: check `logs/engine.log` and `logs/launcher.log` in the project root. A common cause is another process already using port 28765; close it and try again.
 
-### NVIDIA GPU is not being used
-Check whether the system has a supported NVIDIA GPU, check the selected MeetNote hardware mode, make sure required GPU dependencies are installed, and check whether MeetNote needs to be restarted.
+**Audio unavailable**: on Windows, check your microphone/output permissions and default devices. On Linux, confirm PulseAudio or PipeWire is running and that `pulseaudio-utils` is installed; MeetNote needs a working default microphone and a monitor/loopback source for the default output device.
 
-### Microphone or system audio is unavailable
-Check OS audio permissions and whether the expected microphone/output device is available.
+**AI provider unavailable**: run `python setup.py` again to add or update a Gemini/Groq API key; recording and transcription work without one.
 
-### Hardware setting is not taking effect
-Restart MeetNote when the application shows that a restart is required.
-
-## Debugging
-
-Logs can be useful when reporting problems. Runtime logs are stored in the `logs/` directory inside the project root.
+**Linux audio dependency issue**: if system-audio capture fails to find a loopback/monitor device, install `pulseaudio-utils` and confirm `pactl get-default-sink` returns a value; see `docs/LINUX_TESTING.md` for details.
 
 ## Development
 
-For development, use the following commands:
-
-To build the frontend:
 ```bash
-cd desktop
-npm install
-npm run build
+cd engine && .venv/Scripts/python -m pytest   # backend tests (Windows)
+cd engine && .venv/bin/python -m pytest       # backend tests (Linux/macOS)
+
+cd desktop && npm run build                   # build the frontend
+cd desktop && npm run tauri build             # build the desktop application
 ```
 
-To run the backend test suite:
-```bash
-cd engine
-.venv/Scripts/python -m pytest
-```
-
-To build the Tauri desktop application:
-```bash
-cd desktop
-npm run tauri build
-```
+See `docs/TECH_STACK.md` for an overview of the technology and architecture, and `docs/ARCHITECTURE.md` for deeper implementation notes.
 
 ## Known Limitations
 
-- Linux support may require additional platform-specific validation.
-- Speaker diarization is not currently implemented.
-- Some advanced settings may not yet be configurable.
+- Speaker diarization is not implemented
+- Some advanced settings (manual device selection, input/output gain, storage retention) are shown in Settings but not yet wired into behavior
+- Packaging a distributable installer (rather than running from source) is not implemented yet
 
 ## Project Structure
 
 ```text
 MeetNote/
-├── desktop/
-├── docs/
-├── engine/
-├── setup.py
-├── run_meetnote.py
-├── run_meetnote.bat
-├── run_meetnote.sh
-├── .gitignore
+├── desktop/          Tauri + React desktop application
+├── docs/             Technical documentation
+├── engine/           Python backend (FastAPI, audio, transcription, AI, storage)
+├── setup.py          One-time setup and dependency installation
+├── run_meetnote.py   Starts the engine and desktop app together
+├── run_meetnote.bat  Windows convenience wrapper
+├── run_meetnote.sh   Linux/macOS convenience wrapper
 └── README.md
 ```
 

@@ -1,5 +1,10 @@
 # MeetNote Architecture
 
+This document is deeper implementation detail: the module map, process
+lifecycle mechanics, and specific gotchas hit during development. For the
+technology choices and a concise architectural overview, see
+`docs/TECH_STACK.md` first; this file assumes that context.
+
 ## Overview
 
 ```
@@ -56,7 +61,9 @@ engine/
 │   ├── factory.py                  AudioCaptureFactory (Windows/Linux switch)
 │   ├── soundcard_common.py          Shared `soundcard`-based implementation
 │   ├── windows.py / linux.py         Thin OS-specific subclasses
-│   └── health.py                     Non-invasive device probe for /health
+│   └── health.py                     AudioHealthMonitor: dedicated probe
+│                                       thread, cached + hysteresis-gated
+│                                       device status for /health
 ├── transcription/
 │   ├── whisper_engine.py            faster-whisper wrapper + GPU->CPU fallback
 │   └── pipeline.py                   Audio chunk queue -> Whisper -> ChunkRecord
@@ -176,8 +183,15 @@ reason).
   `resolve_engine_paths` docstring).
 - **Linux audio path**: implemented behind the same `AudioCapture`
   interface as Windows (`soundcard`'s PulseAudio/PipeWire-Pulse backend,
-  with a `pactl` monitor-source fallback), but this development session had
-  no Linux machine to verify it on. See `docs/LINUX_TESTING.md`.
+  with a `pactl` monitor-source fallback), but no Linux machine or VM has
+  been available in any development session so far to verify it against
+  real hardware. See `docs/LINUX_TESTING.md`.
+  `audio/health.py`'s background probe resolves devices through the exact
+  same platform `AudioCapture._resolve_source()` a real meeting uses
+  (including the Linux pactl fallback), rather than duplicating raw
+  `soundcard` calls of its own — this was fixed after an audit found the
+  two had drifted apart, which could have made health status disagree with
+  what a real recording would actually experience on Linux specifically.
 - **GPU pre-flight check isn't crash-proof**: `hardware/detector.py`'s CUDA
   usability probe calls into `ctranslate2` directly rather than in an
   isolated subprocess. The `cuda_env.py` fix resolves the specific failure
